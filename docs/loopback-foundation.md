@@ -6,7 +6,7 @@ This file describes the basic foundation of what Loopback is and what are its go
 Loopback is a locally-running service (via Docker, plus a host-side `claude` bridge) that synchronizes recordings from Plaud (plaud.ai) and offers one-click processing - transcription and summarization - which ends as a `JSON` file stored at a preconfigured location on local disk.
 
 ## User Flow
-1. Every N minutes (configurable, minimum 1), recordings are synced from Plaud in the background (metadata only, audio is not downloaded).
+1. Every N minutes (configurable, minimum 1), recordings are synced from Plaud by a background job (metadata only, audio is not downloaded).
 2. List with new recordings is refreshed.
 3. User can listen to a track (audio is streamed on demand through the backend from Plaud's temporary URL), select the nature of processing (how to treat the recording), and click on the "Process" button, which triggers the process flow:
     1. Recording is sent for transcription to the Speechmatics API.
@@ -16,8 +16,26 @@ Loopback is a locally-running service (via Docker, plus a host-side `claude` bri
     5. Source recording is marked as deleted (tombstone) in the local DB so it is not re-synced again. Plaud remains intact (it has no known delete API endpoint).
 
 ## Processing
-- Each recording has a status: `synced → transcribing → summarizing → done | failed`.
+- Each recording has a status: `synced → queued → transcribing → summarizing → done | failed`.
 - A failed recording shows the error and can be retried from the failed step.
+- Clicking "Process" only sets the status to `queued` (with the selected nature); all work is done by background jobs (see below).
+
+## Background Jobs
+Both jobs are ASP.NET `BackgroundService`s inside the backend. All job state lives in SQLite, so a restart (`docker compose down/up`) resumes exactly where it stopped - no in-memory queues.
+- **Sync job** - every N minutes (configurable): lists recordings from Plaud, inserts new ones / updates changed ones (`version_ms`), skips tombstoned ones.
+- **Processing job** - every few seconds (configurable), takes recordings by status:
+  - `queued` → fetches a fresh Plaud temporary audio URL, submits a Speechmatics batch job, stores the Speechmatics job id on the recording, sets `transcribing`.
+  - `transcribing` → polls the stored Speechmatics job (one status call per tick, no blocking wait). When done: stores the transcript in SQLite, deletes the Speechmatics job, sets `summarizing`. When Speechmatics reports failure, or the job exceeds a configurable max age: `failed`.
+  - `summarizing` → runs title + ensemble summary/merge via the Claude Bridge, validates against the schema, writes the `JSON` file, sets `done` and tombstones the recording.
+  - Any error sets `failed` with the error message and the step it failed in; retry puts it back to that step (a stored transcript is never re-transcribed).
+- Speechmatics specifics (verified with `spikes/speechmatics-probe.fsx`, 2026-10-01):
+  - Submit `POST /v2/jobs` (multipart, `config` field only) with `fetch_data.url` = fresh Plaud presigned URL (valid 60 min) - Speechmatics fetches the audio itself, the backend never downloads it.
+  - `transcription_config`: `{ "model": "melia-1", "language": "multi", "diarization": "speaker" }` (melia uses `model`, not `operating_point`, and no `auto` language). Mixed Czech/Slovak/English is handled in one transcript.
+  - Speed: a 91 min recording finished in ~30 s (~$0.20) - a poll interval of ~10 s is plenty.
+  - Transcript: `GET /v2/jobs/{id}/transcript?format=json-v2` → `results[]` of words/punctuation with `alternatives[0].{content, speaker, language, confidence}`; the backend merges them into speaker segments (91 min ≈ 230 segments, ~80k chars ≈ 20k tokens for Claude).
+  - `DELETE /v2/jobs/{id}` → 200, then the job returns 404.
+  - Diarization found 10 speakers (S1..S10) in that recording - may need `speaker_diarization_config` tuning (e.g. `max_speakers`) per nature.
+- Speechmatics is called directly from the backend (submit → poll → fetch → delete as separate steps). There is no Speechmatics proxy - RiffadoDocker needed one only because Riffado expects a synchronous OpenAI-style call.
 - Nature of processing = one subfolder of `prompts/` (e.g. `prompts/Default/`, `prompts/Recording/`); the folder name is what the UI dropdown shows. Every subfolder contains exactly 3 files:
   - `title.md` - system prompt for title generation (single run, plain text)
   - `summary.md` - system prompt for converting the transcript to information (shaped by the schema)
@@ -55,9 +73,9 @@ Loopback is a locally-running service (via Docker, plus a host-side `claude` bri
 ## Technical
 - Frontend is React via Next.js (static export) with DaisyUI as UI library, served by the backend - one container
 - Backend should be in ASP.NET with F# (using Giraffe for REST API)
-- For DB we use SQLite (on a Docker volume)
+- For DB we use SQLite (on a Docker volume), accessed via `Dapper.FSharp` (`Dapper.FSharp.SQLite` module over `Microsoft.Data.Sqlite`). The DB schema is created/migrated by plain SQL scripts run at startup, since Dapper.FSharp has no migrations.
 - Local configuration files should be `JSON`:
-  - `config.json` - Plaud token, sync interval, Speechmatics key and settings, output path, and the `claude` section:
+  - `config.json` - the single configuration file, **including secrets** (simplicity over splitting into `.env`). It is gitignored; the committed template is `config.example.json` (placeholders only). The committed `.githooks/pre-commit` hook (enabled by `git config core.hooksPath .githooks`, which `loopback-up.cmd` sets) blocks committing `config.json`, `.env`, `spikes/fixtures/`, or any added line that looks like a JWT / API key. Contents: Plaud token, sync interval, Speechmatics key and settings, output path, and the `claude` section:
     `{ "bridgeUrl": "http://host.docker.internal:9100", "token": "...", "model": "sonnet", "effort": "high", "passes": 3, "timeoutSeconds": 300 }`
   - `prompts/` - `default.schema.json` plus one subfolder per nature, each with `title.md`, `summary.md`, `merge.md` and optional `schema.json`:
     ```

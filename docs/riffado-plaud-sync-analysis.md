@@ -264,6 +264,7 @@ ai_enhancements    recording_id, user_id, summary, key_points, action_items, sou
 **Minimum viable sync** (single user, self-hosted):
 
 1. Get a **UT** once: easiest is paste of `pld_tokenstr` (localStorage) / `pld_ut` (cookie) from web.plaud.ai; OTP flow only works for email-registered accounts. Reject tokens with `wid`/`ut_ref` claims. Read `region` claim → API base.
+   Easy-to-copy wrong values found in practice: a 64-char hex `pld_*` entry (not a JWT, Plaud answers 400) and the `*:frillSsoToken` JWT (feedback widget, claims `email`/`id`/`name` only, Plaud answers 401). Best instruction for users: run `localStorage.getItem('pld_tokenstr')` in the DevTools console.
 2. Persist: UT (encrypted), `apiBase`, `workspaceId`, `lastSync`, `invalidatedAt`.
 3. Each sync run: list workspaces (once, cache id) → mint WT → page `/file/simple/web` sorted by `edit_time desc`, 50 per page → for each file compare `version_ms` to stored → download via `/file/temp-url` → sniff format → store → upsert row keyed by Plaud `id`.
 4. Stop paging after the last page or two pages with no changes.
@@ -303,3 +304,29 @@ ai_enhancements    recording_id, user_id, summary, key_points, action_items, sou
 | `types/plaud.ts` | Response types |
 | `app/api/plaud/**` | HTTP routes (connect, sync, connection) |
 | `../RiffadoExtension/assets/background.ts-*.js`, `content-plaud.ts-*.js` | Token capture from web.plaud.ai |
+
+---
+
+## 7. Live probe findings (2026-10-01, `spikes/plaud-probe.fsx`, EU account)
+
+Verified against the real API with `spikes/plaud-probe.fsx`. Where this contradicts sections 1–6, **this section wins**.
+
+**Tokens changed (Plaud auth `ver`/`v3`)** – the biggest difference from Riffado's model:
+- The **user token now lives only 24 h** (claims `sub, sid, region, client_id=web, auth_method, mfa_method, ver, iat, exp, aud`), not ~300 days. "Paste the UT once" no longer works.
+- `localStorage.pld_tokenstr` **no longer exists**. The UT is in cookie `pld_ut` (Application → Cookies) or in the `Authorization` header of the `workspaces/list` / `workspace/token` requests.
+- The workspace-token mint response now also returns `refresh_token` (**30 days**), `refresh_expires_in`, `refresh_expires_at`, `wt_expires_at`, `member_id`, `role`, `version_tag: "v3"`.
+- **Workspace token refresh** (found in web.plaud.ai's JS bundle, verified): `POST /user-app/auth/workspace/refresh/{workspaceId}`, body `{}`, header `Authorization: Bearer <workspace refresh_token>` – **no user token needed**. Returns the same shape as the mint. While the WT is still valid it returns the same WT and refresh token with unchanged expiries (idempotent).
+  - **Still open:** after the WT expires, does refresh issue a new WT, rotate the refresh token, and/or extend `refresh_expires_at` (sliding window)? Test with `PLAUD_REFRESH_ONLY=1` after `wt_expires_at`. If the window slides, Loopback stays connected indefinitely; if not, the user re-pastes a token every 30 days.
+- **User token refresh** exists too: `POST /auth/refresh-user-token`, body `{}`, cookie-based (`withCredentials`, refresh token is an HttpOnly cookie; response `token_id`, `ut_expires_in`, `urt_expires_in`, may answer `-302` domain switch). Not needed if the workspace refresh chain holds.
+- Easy-to-copy wrong values: a 64-char hex `pld_*` entry (Plaud answers HTTP 400 "bad request") and the `*:frillSsoToken` JWT (claims `email, id, name`; HTTP 401).
+
+**Data endpoints – confirmed as documented:** `/team-app/workspaces/list`, workspace token mint, `/device/list`, `/file/simple/web`, `/file/temp-url/{id}`, `/file/detail/{id}` all work on the regional host from the JWT `region` claim (`aws:eu-central-1` → `api-euc1.plaud.ai`).
+- Recording fields match section 2.4 (incl. `version_ms`), plus new: `is_markmemo, wait_pull, contributor, contributed_at`.
+- The list response now also has `next_cursor, has_more, total_count` (cursor paging next to `skip`/`limit` – not yet explored).
+
+**Audio:**
+- `temp_url` → `euc1-prod-plaud-bucket.s3.amazonaws.com`, file named **`.ogg`** (no longer `.mp3`), bytes are **Ogg/Opus**; `is_opus=0` and `=1` return the same URL; no `temp_url_opus`.
+- Presigned URL valid **60 minutes**; S3 honours **HTTP Range** → the backend can proxy the player with seeking, and Speechmatics `fetch_data` with a freshly fetched URL is viable (it must start fetching within the hour).
+- 91-minute recording = 22.2 MB (~2 MB per 8 min).
+
+**Plaud content:** `/file/detail` works; `content_list` was empty for an untranscribed recording. The transcript body shape is **still unverified** (Loopback uses Speechmatics, so this only matters for optional Plaud-content import).

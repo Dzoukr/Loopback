@@ -1,0 +1,21 @@
+#!/bin/sh
+# Blocks commits that would leak Loopback secrets or private recording data.
+# Enabled per clone with: git config core.hooksPath .githooks
+# Bypass only when you are certain: git commit --no-verify
+
+blocked=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '(^|/)(config\.json|\.env)$|^spikes/fixtures/')
+if [ -n "$blocked" ]; then
+    echo "pre-commit: refusing to commit secret / private files:"
+    echo "$blocked" | sed 's/^/  /'
+    echo "Unstage them with: git restore --staged <file>"
+    exit 1
+fi
+
+# Added lines that look like a JWT, or a "token"/"apiKey"/"refreshToken" JSON value
+# that is not an obvious placeholder (placeholders start with < or . or are short).
+if git diff --cached -U0 --diff-filter=ACMR | grep -E '^\+' | grep -v '^+++' |
+    grep -qE 'eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|"(token|apiKey|refreshToken)"[[:space:]]*:[[:space:]]*"[^"<.][^"]{15,}"'; then
+    echo "pre-commit: staged changes contain something that looks like a token or API key."
+    echo "Secrets belong in config.json (gitignored). Inspect with: git diff --cached"
+    exit 1
+fi
