@@ -6,10 +6,10 @@
 //
 //   dotnet fsi spikes/speechmatics-probe.fsx
 //
-// Needs config.json (repo root, gitignored): { "speechmatics": { "apiKey": "..." } }
-// and spikes/fixtures/.refresh-state.json from a full plaud-probe.fsx run (used to
-// get a fresh Plaud audio URL via workspace-token refresh). Alternatively set
-// AUDIO_URL to any publicly fetchable audio URL.
+// Needs SPEECHMATICS_API_KEY in .env (repo root, gitignored)
+// and either AUDIO_URL (any publicly fetchable audio URL) or a saved
+// spikes/fixtures/.refresh-state.json (apiBase, workspaceId, refreshToken - used to
+// get a fresh Plaud audio URL via workspace-token refresh).
 // Optional env: PLAUD_FILE_ID (default: newest recording), SM_MODEL (default
 // melia-1), SM_LANGUAGE (default multi).
 //
@@ -100,12 +100,11 @@ let parseOrFail (call: string) (status: int, text: string) =
 // Config
 // --------------------------------------------------------------------------- //
 let apiKey =
-    let path = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "config.json"))
-    if not (File.Exists path) then fail "config.json not found at %s" path
-    let opts = JsonDocumentOptions(CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true)
-    match str (get (JsonNode.Parse(File.ReadAllText path, documentOptions = opts)) [ "speechmatics"; "apiKey" ]) with
-    | "" -> fail "config.json has no speechmatics.apiKey"
-    | k -> k
+    let path = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", ".env"))
+    if not (File.Exists path) then fail ".env not found at %s" path
+    File.ReadAllLines path
+    |> Array.tryPick (fun l -> if l.Trim().StartsWith "SPEECHMATICS_API_KEY=" then Some(l.Trim().Substring 21) else None)
+    |> Option.defaultWith (fun () -> fail ".env has no SPEECHMATICS_API_KEY")
 
 let smRequest (meth: HttpMethod) (path: string) =
     let r = new HttpRequestMessage(meth, smBase + path)
@@ -126,7 +125,7 @@ let plaudCall (apiBase: string) (bearer: string) (meth: HttpMethod) (path: strin
 
 let plaudAudio () =
     let statePath = Path.Combine(fixturesDir, ".refresh-state.json")
-    if not (File.Exists statePath) then fail "No %s - run plaud-probe.fsx first (or set AUDIO_URL)" statePath
+    if not (File.Exists statePath) then fail "No %s - set AUDIO_URL instead" statePath
     let s = JsonNode.Parse(File.ReadAllText statePath)
     let apiBase, wsId, rt = str (get s [ "apiBase" ]), str (get s [ "workspaceId" ]), str (get s [ "refreshToken" ])
     let r = plaudCall apiBase rt HttpMethod.Post $"/user-app/auth/workspace/refresh/{Uri.EscapeDataString wsId}" (Some "{}")

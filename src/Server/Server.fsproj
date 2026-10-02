@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Loopback.Server</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Migrations\*.sql" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="OpenAPI.fs" />
+    <Compile Include="Serialization.fs" />
+    <Compile Include="Handlers.fs" />
+    <Compile Include="Configuration.fs" />
+    <Compile Include="Db.fs" />
+    <Compile Include="Integrations\Plaud.fs" />
+    <Compile Include="Integrations\Speechmatics.fs" />
+    <Compile Include="Integrations\ClaudeBridge.fs" />
+    <Compile Include="Integrations\AudioPeaks.fs" />
+    <Compile Include="Features\Recordings\Domain.fs" />
+    <Compile Include="Features\Recordings\Database.fs" />
+    <Compile Include="Features\Recordings\Sync\PlaudSession.fs" />
+    <Compile Include="Features\Recordings\Sync\SyncTrigger.fs" />
+    <Compile Include="Features\Recordings\Audio\AudioStore.fs" />
+    <Compile Include="Features\Recordings\Processing\Workflows.fs" />
+    <Compile Include="Features\Recordings\Queries.fs" />
+    <Compile Include="Features\Recordings\CommandHandler.fs" />
+    <Compile Include="Features\Recordings\Sync\SyncBackgroundService.fs" />
+    <Compile Include="Features\Recordings\Processing\Pipeline.fs" />
+    <Compile Include="Features\Recordings\Processing\ProcessingBackgroundService.fs" />
+    <Compile Include="Features\Recordings\Audio\AudioBackgroundService.fs" />
+    <Compile Include="Features\Recordings\API.fs" />
+    <Compile Include="WebApp.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Giraffe" />
+    <PackageReference Include="Giraffe.OpenApi" />
+    <PackageReference Include="Microsoft.OpenApi" />
+    <PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" />
+    <PackageReference Include="FSharp.SystemTextJson" />
+    <PackageReference Include="Dapper.FSharp" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="JsonSchema.Net" />
+    <PackageReference Include="Concentus" />
+    <PackageReference Include="Concentus.Oggfile" />
+    <PackageReference Include="BouncyCastle.Cryptography" />
+  </ItemGroup>
+</Project>

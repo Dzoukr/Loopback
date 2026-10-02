@@ -307,9 +307,9 @@ ai_enhancements    recording_id, user_id, summary, key_points, action_items, sou
 
 ---
 
-## 7. Live probe findings (2026-10-01, `spikes/plaud-probe.fsx`, EU account)
+## 7. Live probe findings (2026-10-01, EU account)
 
-Verified against the real API with `spikes/plaud-probe.fsx`. Where this contradicts sections 1–6, **this section wins**.
+Verified against the real API with a throwaway probe script (since removed). Where this contradicts sections 1–6, **this section wins**.
 
 **Tokens changed (Plaud auth `ver`/`v3`)** – the biggest difference from Riffado's model:
 - The **user token now lives only 24 h** (claims `sub, sid, region, client_id=web, auth_method, mfa_method, ver, iat, exp, aud`), not ~300 days. "Paste the UT once" no longer works.
@@ -330,3 +330,35 @@ Verified against the real API with `spikes/plaud-probe.fsx`. Where this contradi
 - 91-minute recording = 22.2 MB (~2 MB per 8 min).
 
 **Plaud content:** `/file/detail` works; `content_list` was empty for an untranscribed recording. The transcript body shape is **still unverified** (Loopback uses Speechmatics, so this only matters for optional Plaud-content import).
+
+**Session revocation (observed 2026-10-01, Loopback backend):** a workspace session minted from the user token was revoked ~5 minutes later while the browser was active on web.plaud.ai with the same login: data calls returned business status **`-419` "workspace token expired"** (HTTP 200) and the refresh endpoint **`-420` "token invalid or session expired, re-exchange required"**. Minting again with the (still valid) user token gave a working session. Minting twice in a row returns the *same* tokens (one session per login + workspace), so a second mint by Loopback itself does not revoke anything - the trigger was most likely the browser rotating the shared session. Loopback treats `-419`/`-420` as "session revoked": refresh, else re-mint, retry once.
+
+---
+
+## 8. Own login session (2026-10-02, `spikes/plaud-login-probe.fsx`, EU account)
+
+Why: the pasted `pld_ut` belongs to the **browser's** login session (the workspace refresh token carries its `ut_sid`). When web.plaud.ai rotates that session, Loopback gets `-419`/`-420`, and re-minting needs the 24 h user token, which has long expired → a fresh paste every day. Fix: Loopback logs in **by itself** and gets a session of its own. Where this contradicts sections 1–7, **this section wins**. Implemented in `Integrations/Plaud.fs` (`Login`, `RefreshUserToken`) and `Sync/PlaudSession.fs`.
+
+Endpoints, from the web.plaud.ai bundle (`prod-261001`; `AuthPage`, `ecies` and `app-initial-common` chunks), all verified live:
+
+| Call | Auth | Notes |
+|---|---|---|
+| `GET /config/security` | none | `data: { pass_pub_key: "<compressed secp256k1 hex>", pass_algorithm: "secp256k1" }` - same on every host |
+| `POST /auth/access-token` | none | **multipart** form: `username`, `password` (encrypted, below), `client_id=web`, `password_encrypted=true`. Global host answers `-302` `"user region mismatch"` with the regional host → repeat there (fresh `/config/security`, fresh encryption). Statuses: `0` ok, `10001` MFA required (`data.pre_token`), `-3` wrong password, `-403` not in allow list |
+| `POST /auth/refresh-user-token` | cookie `pld_urt` | body `{}`; same answer shape as the login; may answer `-302` |
+| `GET /auth/access-token-list` | user token | active login sessions (`active_time, auth_time, client_id, device_id, is_current, user_agent, user_agent_show`) |
+| `POST /auth/access-token-logout` | user token | ends the session (not used by Loopback) |
+
+**Password encryption** = eciesjs defaults: `base64(ECIES(pass_pub_key, JSON {"pass": "<password>", "time": <unix s>}))` - secp256k1, random ephemeral key, **uncompressed** ephemeral public key (65 B), shared point **uncompressed** (65 B), key = HKDF-SHA256(ephemeralPk ‖ sharedPoint, no salt, no info, 32 B), AES-256-GCM with a **16-byte** nonce, output `ephemeralPk ‖ nonce ‖ tag ‖ ciphertext`. .NET has neither the full ECDH point nor 16-byte GCM nonces → BouncyCastle. Cross-checked against eciesjs `decrypt`.
+
+**Login / refresh answer:** top-level `access_token` (**empty string**), `refresh_token` (empty), `token_id`, `token_type`, `uid`, `ut_expire_at` / `ut_expires_in` (86400), `urt_expire_at` / `urt_expires_in` (2592000), `login_count_per_hour`, `login_total_per_hour` (10), `version_tag: "v3"`. The tokens come **only as cookies**, after a series of clearing cookies (empty value, `Max-Age=0`, for `plaud.ai`, the API host and host-only, paths `/` and `/auth/refresh-user-token`) - take the **last non-empty** one:
+- `pld_ut` - user token, `Domain=plaud.ai; Path=/; Max-Age=86400; HttpOnly`. Claims `sub, sid, region, client_id=web, auth_method=email_password, mfa_method=skipped, ver, iat, exp, aud`.
+- `pld_urt` - user refresh token, `Domain=plaud.ai; Path=/auth/refresh-user-token; Max-Age=2592000; HttpOnly`.
+
+**Findings:**
+- The login creates a **new session** (`sid` differs from the browser's); the browser's token keeps working → the two sessions coexist, and the browser can no longer revoke Loopback's.
+- The user token mints workspace tokens and lists recordings as before.
+- `refresh-user-token` issues a new user token in the **same session**, and **rotates `pld_urt`** - always store the new one. The previous user token stays valid until its `exp`.
+- `login_total_per_hour: 10` → Plaud throttles logins; every login adds a session (6 were listed after a few probes). Loopback logs in only when renewals fail and backs off 60 min after a refused login.
+- **Still open:** whether `urt_expire_at` slides on refresh (in the probe, refresh ran seconds after the login). Run `LOGIN_REFRESH_ONLY=1 dotnet fsi spikes/plaud-login-probe.fsx` after the 24 h user token expired. If it does not slide, Loopback simply logs in again every 30 days - no user action either way.
+- Accounts created via Google/Apple have no password - they would need one set in Plaud first (not tested).

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- ASP.NET -->
+    <PackageVersion Include="Giraffe" Version="8.3.0" />
+    <PackageVersion Include="Giraffe.OpenApi" Version="0.1.0" />
+    <PackageVersion Include="Microsoft.OpenApi" Version="2.12.2" />
+    <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.1.0" />
+    <PackageVersion Include="FSharp.SystemTextJson" Version="1.4.36" />
+    <!-- Data -->
+    <PackageVersion Include="Dapper.FSharp" Version="4.10.0" />
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+    <PackageVersion Include="JsonSchema.Net" Version="9.4.0" />
+    <!-- Audio (Opus decoding for waveform peaks, pure .NET) -->
+    <PackageVersion Include="Concentus" Version="2.2.2" />
+    <PackageVersion Include="Concentus.Oggfile" Version="1.0.7" />
+    <!-- Crypto (Plaud password encryption: ECIES over secp256k1, AES-GCM with a 16-byte nonce) -->
+    <PackageVersion Include="BouncyCastle.Cryptography" Version="2.7.0" />
+    <!-- FSharp -->
+    <PackageVersion Include="FSharp.Core" Version="10.0.101" />
+  </ItemGroup>
+</Project>

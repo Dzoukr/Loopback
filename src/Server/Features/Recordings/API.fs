@@ -1,0 +1,200 @@
+module Loopback.Server.Features.Recordings.API
+
+open System
+open Giraffe
+open Giraffe.EndpointRouting
+open Microsoft.AspNetCore.Http
+open Microsoft.Extensions.DependencyInjection
+open Loopback.Server.Handlers
+open Loopback.Server.OpenAPI
+open Loopback.Server.Features.Recordings.Domain
+
+// API contracts use plain .NET types only (no option / list), so the generated
+// TypeScript client stays simple. Missing values are null.
+
+type RecordingDto = {
+    Id : string
+    Filename : string
+    StartTime : DateTimeOffset
+    DurationMs : int64
+    /// synced | queued | transcribing | summarizing | done | failed
+    Status : string
+    Workflow : string
+    Title : string
+    Error : string
+    FailedStep : string
+    OutputFile : string
+    UpdatedAt : DateTimeOffset
+    /// Waveform envelope in [0, 1] (600 values), null until computed.
+    Peaks : float[]
+    /// Result file JSON (envelope with `content`, shape per workflow schema) of a done recording, else null.
+    Result : string
+    /// Done with a stored transcript: the workflow can run again without transcribing.
+    CanReprocess : bool
+}
+
+type WorkflowDto = {
+    Name : string
+    HasCustomSchema : bool
+}
+
+type SyncStatusDto = {
+    Connected : bool
+    LastSyncAt : Nullable<DateTimeOffset>
+    LastError : string
+    Account : string
+}
+
+type ProcessRecordingRequest = {
+    RecordingId : string
+    Workflow : string
+}
+
+type RetryRecordingRequest = {
+    RecordingId : string
+}
+
+type ReprocessRecordingRequest = {
+    RecordingId : string
+    Workflow : string
+}
+
+type DeleteRecordingRequest = {
+    RecordingId : string
+}
+
+type SuccessResponse = {
+    Success : bool
+}
+
+let private orNull (o: string option) = Option.toObj o
+let private orNullable (o: DateTimeOffset option) = Option.toNullable o
+
+let private getRecordings (ctx: HttpContext) =
+    task {
+        let queries = ctx.RequestServices.GetRequiredService<RecordingsQueries>()
+        let! recordings = queries.GetRecordings()
+        return
+            recordings
+            |> List.map (fun r ->
+                {
+                    Id = r.Id
+                    Filename = r.Filename
+                    StartTime = r.StartTime
+                    DurationMs = r.DurationMs
+                    Status = RecordingStatus.toKey r.Status
+                    Workflow = orNull r.Workflow
+                    Title = orNull r.Title
+                    Error = orNull r.Error
+                    FailedStep = r.FailedStep |> Option.map RecordingStatus.toKey |> orNull
+                    OutputFile = orNull r.OutputFile
+                    UpdatedAt = r.UpdatedAt
+                    Peaks = Option.toObj r.Peaks
+                    Result = orNull r.Result
+                    CanReprocess = r.CanReprocess
+                })
+            |> Array.ofList
+    }
+
+let private getWorkflows (ctx: HttpContext) =
+    task {
+        let queries = ctx.RequestServices.GetRequiredService<RecordingsQueries>()
+        let! workflows = queries.GetWorkflows()
+        return workflows |> List.map (fun n -> { Name = n.Name; HasCustomSchema = n.HasCustomSchema }) |> Array.ofList
+    }
+
+let private getSyncStatus (ctx: HttpContext) =
+    task {
+        let queries = ctx.RequestServices.GetRequiredService<RecordingsQueries>()
+        let! s = queries.GetSyncStatus()
+        return {
+            Connected = s.Connected
+            LastSyncAt = orNullable s.LastSyncAt
+            LastError = orNull s.LastError
+            Account = orNull s.Account
+        }
+    }
+
+/// The locally stored Ogg/Opus file, with HTTP Range support for seeking.
+let private getAudio (recordingId: string) : HttpHandler =
+    fun next ctx -> task {
+        let queries = ctx.RequestServices.GetRequiredService<RecordingsQueries>()
+        let! path = queries.GetAudioFile recordingId
+        match path with
+        | Some p ->
+            ctx.SetContentType "audio/ogg"
+            return! streamFile true p None None next ctx
+        | None -> return! RequestErrors.NOT_FOUND $"Recording {recordingId} not found" next ctx
+    }
+
+let private processRecording (ctx: HttpContext) =
+    task {
+        let! req = ctx.BindJsonAsync<ProcessRecordingRequest>()
+        let commandHandler = ctx.RequestServices.GetRequiredService<RecordingsCommandHandler>()
+        let! _ = commandHandler.Handle(ProcessRecording { RecordingId = req.RecordingId; Workflow = req.Workflow })
+        return { Success = true }
+    }
+
+let private retryRecording (ctx: HttpContext) =
+    task {
+        let! req = ctx.BindJsonAsync<RetryRecordingRequest>()
+        let commandHandler = ctx.RequestServices.GetRequiredService<RecordingsCommandHandler>()
+        let! _ = commandHandler.Handle(RetryRecording { RecordingId = req.RecordingId })
+        return { Success = true }
+    }
+
+let private reprocessRecording (ctx: HttpContext) =
+    task {
+        let! req = ctx.BindJsonAsync<ReprocessRecordingRequest>()
+        let commandHandler = ctx.RequestServices.GetRequiredService<RecordingsCommandHandler>()
+        let! _ = commandHandler.Handle(ReprocessRecording { RecordingId = req.RecordingId; Workflow = req.Workflow })
+        return { Success = true }
+    }
+
+let private deleteRecording (ctx: HttpContext) =
+    task {
+        let! req = ctx.BindJsonAsync<DeleteRecordingRequest>()
+        let commandHandler = ctx.RequestServices.GetRequiredService<RecordingsCommandHandler>()
+        let! _ = commandHandler.Handle(DeleteRecording { RecordingId = req.RecordingId })
+        return { Success = true }
+    }
+
+let private syncNow (ctx: HttpContext) =
+    task {
+        let commandHandler = ctx.RequestServices.GetRequiredService<RecordingsCommandHandler>()
+        let! _ = commandHandler.Handle SyncNow
+        return { Success = true }
+    }
+
+let api =
+    subRoute "/recordings" [
+        GET [
+            route "" (simpleJson getRecordings)
+            |> jsonOut<RecordingDto[]> "getRecordings"
+
+            route "/workflows" (simpleJson getWorkflows)
+            |> jsonOut<WorkflowDto[]> "getWorkflows"
+
+            route "/sync-status" (simpleJson getSyncStatus)
+            |> jsonOut<SyncStatusDto> "getSyncStatus"
+
+            // Binary, not part of the generated client - the web app proxies it (app/api/recordings/[id]/audio).
+            routef "/%s/audio" getAudio
+        ]
+        POST [
+            route "/process" (simpleJson processRecording)
+            |> jsonInOut<ProcessRecordingRequest, SuccessResponse> "processRecording"
+
+            route "/retry" (simpleJson retryRecording)
+            |> jsonInOut<RetryRecordingRequest, SuccessResponse> "retryRecording"
+
+            route "/reprocess" (simpleJson reprocessRecording)
+            |> jsonInOut<ReprocessRecordingRequest, SuccessResponse> "reprocessRecording"
+
+            route "/delete" (simpleJson deleteRecording)
+            |> jsonInOut<DeleteRecordingRequest, SuccessResponse> "deleteRecording"
+
+            route "/sync" (simpleJson syncNow)
+            |> jsonOut<SuccessResponse> "syncNow"
+        ]
+    ]

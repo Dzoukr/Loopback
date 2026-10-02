@@ -1,0 +1,6 @@
+{
+  "model": "sonnet",
+  "effort": "high",
+  "passes": 3,
+  "timeoutSeconds": 300
+}

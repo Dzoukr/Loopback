@@ -11,11 +11,12 @@ if [ -n "$blocked" ]; then
     exit 1
 fi
 
-# Added lines that look like a JWT, or a "token"/"apiKey"/"refreshToken" JSON value
-# that is not an obvious placeholder (placeholders start with < or . or are short).
+# Added lines that look like a JWT, a "token"/"apiKey"/"refreshToken" JSON value, or a
+# *_TOKEN / *_KEY / *_SECRET env assignment that is not an obvious placeholder
+# (placeholders start with < or . or are short).
 if git diff --cached -U0 --diff-filter=ACMR | grep -E '^\+' | grep -v '^+++' |
-    grep -qE 'eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|"(token|apiKey|refreshToken)"[[:space:]]*:[[:space:]]*"[^"<.][^"]{15,}"'; then
+    grep -qE 'eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|"(token|apiKey|refreshToken)"[[:space:]]*:[[:space:]]*"[^"<.][^"]{15,}"|[A-Z0-9_]*(TOKEN|KEY|SECRET)[[:space:]]*=[[:space:]]*["'"'"']?[^"'"'"'<.[:space:]][^[:space:]]{15,}'; then
     echo "pre-commit: staged changes contain something that looks like a token or API key."
-    echo "Secrets belong in config.json (gitignored). Inspect with: git diff --cached"
+    echo "Secrets belong in .env (gitignored). Inspect with: git diff --cached"
     exit 1
 fi

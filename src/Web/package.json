@@ -1,0 +1,30 @@
+{
+  "name": "web",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "generate:api": "swagger-typescript-api generate -p http://localhost:5000/openapi/v1.json -o src/lib/generated -n api-client.ts --axios --generate-union-enums"
+  },
+  "dependencies": {
+    "axios": "^1.13.2",
+    "next": "^16.0.8",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1"
+  },
+  "devDependencies": {
+    "@fortawesome/fontawesome-free": "^7.1.0",
+    "@tailwindcss/postcss": "^4.1.17",
+    "@types/node": "^24.10.2",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "daisyui": "^5.5.11",
+    "postcss": "^8.5.6",
+    "swagger-typescript-api": "^13.2.16",
+    "tailwindcss": "^4.1.17",
+    "typescript": "^5.9.3"
+  },
+  "packageManager": "yarn@4.15.0"
+}

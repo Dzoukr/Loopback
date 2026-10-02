@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "summary": { "type": "string" },
+    "keyPoints": { "type": "array", "items": { "type": "string" } },
+    "actionItems": { "type": "array", "items": { "type": "string" } }
+  },
+  "required": ["summary", "keyPoints", "actionItems"],
+  "additionalProperties": false
+}

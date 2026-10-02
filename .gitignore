@@ -1,4 +1,11 @@
-config.json
 .env
 spikes/fixtures/
-*.log
+*.log*
+data/
+output/
+artifacts/
+node_modules/
+.next/
+**/.yarn/install-state.gz
+next-env.d.ts
+*.tsbuildinfo

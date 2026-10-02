@@ -12,17 +12,18 @@
 //   Run (windowless):  conhost.exe --headless dotnet fsi claude-bridge.fsx
 //   Run (debug):       dotnet fsi claude-bridge.fsx
 //
-// Settings come from the "claude" section of config.json next to this script
-// (override the path with LOOPBACK_CONFIG):
-//   bridgeUrl       port is taken from it            (default 9100)
-//   token           shared secret, X-Bridge-Token    (required)
-//   timeoutSeconds  max seconds per claude call      (default 300)
-//   maxConcurrent   max parallel claude processes    (default 4)
-// CLAUDE_BIN env var overrides the claude binary (default: `claude` on PATH).
+// Settings come from .env next to this script (override the path with LOOPBACK_ENV_FILE);
+// real environment variables win over the file:
+//   CLAUDE_BRIDGE_URL       port is taken from it        (default 9100)
+//   CLAUDE_BRIDGE_TOKEN     shared secret, X-Bridge-Token (required)
+//   MAX_CONCURRENCY         max parallel claude processes (default 4)
+// The timeout is per request (`timeoutSeconds`, set per workflow in default.claude.json /
+// claude.json): default 300 s, capped at 3600 s so a typo cannot leave claude running for hours.
+//   CLAUDE_BIN              claude binary                 (default: `claude` on PATH)
 //
 // Endpoints:
 //   GET  /health  -> { status, claudeVersion, jsonSchema, ... }      (no token)
-//   POST /run     { system, prompt, model, effort, schema? }
+//   POST /run     { system, prompt, model, effort, schema?, timeoutSeconds? }
 //                 -> { result, structuredOutput, usage, costUsd, durationMs }
 //                 400 bad input, 401 bad token, 502 claude error, 504 timeout
 // =============================================================================
@@ -64,45 +65,50 @@ let log fmt =
 type Config =
     { Port: int
       Token: string
-      TimeoutSeconds: int
-      MaxConcurrent: int
+      MaxConcurrency: int
       ClaudeBin: string
       WorkDir: string }
 
+/// KEY=VALUE lines of the .env file (same format the backend and Docker Compose read).
+let readDotEnv (path: string) =
+    if not (File.Exists path) then Map.empty
+    else
+        File.ReadAllLines path
+        |> Array.map _.Trim()
+        |> Array.filter (fun l -> l <> "" && not (l.StartsWith "#") && l.Contains "=")
+        |> Array.map (fun l ->
+            let i = l.IndexOf '='
+            let value = l.Substring(i + 1).Trim()
+            let value =
+                if value.Length >= 2 && ((value.StartsWith "\"" && value.EndsWith "\"") || (value.StartsWith "'" && value.EndsWith "'"))
+                then value.Substring(1, value.Length - 2)
+                else value
+            l.Substring(0, i).Trim(), value)
+        |> Map.ofArray
+
 let loadConfig () =
     let path =
-        match Environment.GetEnvironmentVariable "LOOPBACK_CONFIG" with
-        | null | "" -> Path.Combine(__SOURCE_DIRECTORY__, "config.json")
+        match Environment.GetEnvironmentVariable "LOOPBACK_ENV_FILE" with
+        | null | "" -> Path.Combine(__SOURCE_DIRECTORY__, ".env")
         | p -> p
-    if not (File.Exists path) then failwithf "config.json not found at %s" path
-    let options = JsonDocumentOptions(CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true)
-    use doc = JsonDocument.Parse(File.ReadAllText path, options)
-    let claude =
-        match doc.RootElement.TryGetProperty "claude" with
-        | true, c when c.ValueKind = JsonValueKind.Object -> c
-        | _ -> failwithf "%s has no \"claude\" section" path
+    let dotEnv = readDotEnv path
+    // Real environment variables win over .env.
     let str (name: string) =
-        match claude.TryGetProperty name with
-        | true, v when v.ValueKind = JsonValueKind.String -> Some(v.GetString())
-        | _ -> None
+        match Environment.GetEnvironmentVariable name with
+        | null | "" -> dotEnv |> Map.tryFind name |> Option.filter (String.IsNullOrWhiteSpace >> not)
+        | v -> Some v
     let num (name: string) =
-        match claude.TryGetProperty name with
-        | true, v when v.ValueKind = JsonValueKind.Number -> Some(v.GetInt32())
-        | _ -> None
+        str name |> Option.bind (fun v -> match Int32.TryParse v with | true, n -> Some n | _ -> None)
     let token =
-        match str "token" with
-        | Some t when not (String.IsNullOrWhiteSpace t) -> t
-        | _ -> failwith "claude.token is required in config.json (shared secret for X-Bridge-Token)"
+        match str "CLAUDE_BRIDGE_TOKEN" with
+        | Some t -> t
+        | None -> failwithf "CLAUDE_BRIDGE_TOKEN is required (shared secret for X-Bridge-Token) - set it in %s" path
     let workDir = Path.Combine(Path.GetTempPath(), "loopback-claude")
     Directory.CreateDirectory workDir |> ignore
-    { Port = str "bridgeUrl" |> Option.map (fun u -> Uri(u).Port) |> Option.defaultValue 9100
+    { Port = str "CLAUDE_BRIDGE_URL" |> Option.map (fun u -> Uri(u).Port) |> Option.defaultValue 9100
       Token = token
-      TimeoutSeconds = num "timeoutSeconds" |> Option.defaultValue 300
-      MaxConcurrent = num "maxConcurrent" |> Option.defaultValue 4 |> max 1
-      ClaudeBin =
-        match Environment.GetEnvironmentVariable "CLAUDE_BIN" with
-        | null | "" -> "claude"
-        | b -> b
+      MaxConcurrency = num "MAX_CONCURRENCY" |> Option.defaultValue 4 |> max 1
+      ClaudeBin = str "CLAUDE_BIN" |> Option.defaultValue "claude"
       // A neutral, empty cwd keeps any project CLAUDE.md out of the prompt.
       WorkDir = workDir }
 
@@ -142,7 +148,11 @@ type RunRequest =
       Prompt: string
       Model: string
       Effort: string
-      Schema: string option }
+      Schema: string option
+      TimeoutSeconds: int }
+
+let defaultTimeoutSeconds = 300
+let maxTimeoutSeconds = 3600
 
 let aliases = set [ "haiku"; "sonnet"; "opus" ]
 let fullModelId = Regex(@"^claude-[a-z0-9][a-z0-9.\-]*$")
@@ -172,6 +182,15 @@ let parseRun (body: string) : Result<RunRequest, string> =
         else
             let system, prompt = getStr root "system", getStr root "prompt"
             let model, effort = getStr root "model", getStr root "effort"
+            let timeout =
+                match root.TryGetProperty "timeoutSeconds" with
+                | false, _ -> Ok defaultTimeoutSeconds
+                | true, v when v.ValueKind = JsonValueKind.Null -> Ok defaultTimeoutSeconds
+                | true, v when v.ValueKind = JsonValueKind.Number && v.TryGetInt32() |> fst ->
+                    let t = v.GetInt32()
+                    if t >= 1 && t <= maxTimeoutSeconds then Ok t
+                    else Error $"timeoutSeconds must be 1 - {maxTimeoutSeconds} (got {t})"
+                | true, _ -> Error "timeoutSeconds must be a whole number of seconds"
             let schema =
                 match root.TryGetProperty "schema" with
                 | false, _ -> Ok None
@@ -183,6 +202,7 @@ let parseRun (body: string) : Result<RunRequest, string> =
                 | true, _ -> Error "schema must be a JSON object (or a string containing one)"
             match schema with
             | Error e -> Error e
+            | _ when Result.isError timeout -> Error(match timeout with Error e -> e | Ok _ -> "")
             | _ when String.IsNullOrWhiteSpace system -> Error "system is required"
             | _ when String.IsNullOrWhiteSpace prompt -> Error "prompt is required"
             | _ when isNull model || not (aliases.Contains model || fullModelId.IsMatch model) ->
@@ -193,7 +213,8 @@ let parseRun (body: string) : Result<RunRequest, string> =
             | Ok s when system.Length + (defaultArg s "").Length > maxArgChars ->
                 Error $"system + schema exceed {maxArgChars} chars (Windows command-line limit); move content into prompt"
             | Ok s ->
-                Ok { System = system; Prompt = prompt; Model = model; Effort = effort; Schema = s }
+                Ok { System = system; Prompt = prompt; Model = model; Effort = effort; Schema = s
+                     TimeoutSeconds = match timeout with Ok t -> t | Error _ -> defaultTimeoutSeconds }
     with ex ->
         Error $"invalid JSON body: {ex.Message}"
 
@@ -239,7 +260,7 @@ let runClaude (r: RunRequest) : Task<RunOutcome> =
             p.StandardInput.Close()
         with :? IOException -> () // claude exited early; its stderr says why
 
-        use cts = new CancellationTokenSource(TimeSpan.FromSeconds(float cfg.TimeoutSeconds))
+        use cts = new CancellationTokenSource(TimeSpan.FromSeconds(float r.TimeoutSeconds))
         let! exited =
             task {
                 try
@@ -251,7 +272,7 @@ let runClaude (r: RunRequest) : Task<RunOutcome> =
 
         if not exited then
             try p.Kill true with _ -> () // whole tree, so no orphaned node/claude children
-            return Failed(504, $"claude timed out after {cfg.TimeoutSeconds}s")
+            return Failed(504, $"claude timed out after {r.TimeoutSeconds}s")
         else
             let! out = stdout
             let! err = stderr
@@ -309,11 +330,12 @@ let health () =
     o["status"] <- JsonValue.Create "ok"
     o["claudeVersion"] <- JsonValue.Create(Option.toObj claudeVersion)
     o["jsonSchema"] <- JsonValue.Create schemaSupported
-    o["timeoutSeconds"] <- JsonValue.Create cfg.TimeoutSeconds
-    o["maxConcurrent"] <- JsonValue.Create cfg.MaxConcurrent
+    o["defaultTimeoutSeconds"] <- JsonValue.Create defaultTimeoutSeconds
+    o["maxTimeoutSeconds"] <- JsonValue.Create maxTimeoutSeconds
+    o["maxConcurrency"] <- JsonValue.Create cfg.MaxConcurrency
     o
 
-let gate = new SemaphoreSlim(cfg.MaxConcurrent)
+let gate = new SemaphoreSlim(cfg.MaxConcurrency)
 let maxBodyBytes = 20L * 1024L * 1024L
 
 let handleRun (ctx: HttpListenerContext) =
@@ -392,7 +414,7 @@ with ex ->
 log "claude-bridge listening on http://127.0.0.1:%d" cfg.Port
 log "  claude binary : %s (%s)" cfg.ClaudeBin (defaultArg claudeVersion "NOT FOUND")
 log "  json-schema   : %s" (if schemaSupported then "supported" else "NOT supported")
-log "  timeout       : %ds, max concurrent: %d" cfg.TimeoutSeconds cfg.MaxConcurrent
+log "  timeout       : per request, default %ds, max %ds; max concurrency: %d" defaultTimeoutSeconds maxTimeoutSeconds cfg.MaxConcurrency
 log "  workdir       : %s" cfg.WorkDir
 
 while listener.IsListening do

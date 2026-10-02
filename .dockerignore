@@ -1,0 +1,11 @@
+# Secrets and local state are mounted at runtime (docker-compose.yml), never baked into an image
+config.json
+.env
+data
+output
+spikes
+artifacts
+**/bin
+**/obj
+src/Web
+*.log*
