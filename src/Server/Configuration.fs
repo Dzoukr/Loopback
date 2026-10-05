@@ -5,9 +5,10 @@ open System.IO
 open Microsoft.Extensions.Configuration
 
 // All settings are environment variables (template: .env.example in the repo root).
-// docker-compose.yml passes them from .env via `env_file`; under `dotnet run` the repo's
+// LoopbackDocker's docker-compose.yml passes them from .env via `env_file`; under `dotnet run` the repo's
 // .env is loaded too (see Program.fs), real environment variables win.
-// Paths (set by docker-compose.yml; defaults relative to src/Server for `dotnet run`):
+// Paths (set by docker-compose.yml inside the container; under `dotnet run` also from .env, relative to
+// the repo root; defaults relative to src/Server):
 //   LOOPBACK_WORKFLOWS workflows folder         (default ../../workflows)
 //   LOOPBACK_DATA     folder for loopback.db     (default ../../data)
 //   LOOPBACK_OUTPUT   folder for result files    (default ../../output)
@@ -54,17 +55,47 @@ type Configuration = {
     Paths : PathsConfiguration
 }
 
-/// Relative defaults resolve against `contentRoot` (src/Server under `dotnet run`).
+/// Minimal .env parser: KEY=VALUE lines, `#` comments, optional surrounding quotes.
+let readDotEnv (path: string) : (string * string) list =
+    if not (File.Exists path) then []
+    else
+        File.ReadAllLines path
+        |> Array.map _.Trim()
+        |> Array.filter (fun l -> l <> "" && not (l.StartsWith "#") && l.Contains "=")
+        |> Array.map (fun l ->
+            let i = l.IndexOf '='
+            let key = l.Substring(0, i).Trim()
+            let value = l.Substring(i + 1).Trim()
+            let value =
+                if value.Length >= 2 && ((value.StartsWith "\"" && value.EndsWith "\"") || (value.StartsWith "'" && value.EndsWith "'"))
+                then value.Substring(1, value.Length - 2)
+                else value
+            key, value)
+        |> List.ofArray
+
+/// Paths come from environment variables, then from .env (relative values resolve against the .env
+/// folder, i.e. the repo root), then the defaults (relative to `contentRoot` - src/Server under `dotnet run`).
 let paths (contentRoot: string) =
-    let fromEnv (name: string) (fallback: string) =
+    let fromEnv (name: string) =
         match Environment.GetEnvironmentVariable name with
-        | null | "" -> Path.GetFullPath(Path.Combine(contentRoot, fallback))
-        | p -> Path.GetFullPath p
+        | null | "" -> None
+        | p -> Some (Path.GetFullPath p)
+    let envFile =
+        fromEnv "LOOPBACK_ENV_FILE"
+        |> Option.defaultWith (fun () -> Path.GetFullPath(Path.Combine(contentRoot, "../../.env")))
+    let dotEnv = readDotEnv envFile |> Map.ofList
+    let path (name: string) (fallback: string) =
+        fromEnv name
+        |> Option.orElseWith (fun () ->
+            dotEnv |> Map.tryFind name
+            |> Option.filter (String.IsNullOrWhiteSpace >> not)
+            |> Option.map (fun p -> Path.GetFullPath(Path.Combine(Path.GetDirectoryName envFile, p))))
+        |> Option.defaultWith (fun () -> Path.GetFullPath(Path.Combine(contentRoot, fallback)))
     {
-        EnvFile = fromEnv "LOOPBACK_ENV_FILE" "../../.env"
-        Workflows = fromEnv "LOOPBACK_WORKFLOWS" "../../workflows"
-        Data = fromEnv "LOOPBACK_DATA" "../../data"
-        Output = fromEnv "LOOPBACK_OUTPUT" "../../output"
+        EnvFile = envFile
+        Workflows = path "LOOPBACK_WORKFLOWS" "../../workflows"
+        Data = path "LOOPBACK_DATA" "../../data"
+        Output = path "LOOPBACK_OUTPUT" "../../output"
     }
 
 let read (paths: PathsConfiguration) (config: IConfiguration) : Configuration =
@@ -97,21 +128,3 @@ let read (paths: PathsConfiguration) (config: IConfiguration) : Configuration =
         }
         Paths = paths
     }
-
-/// Minimal .env parser: KEY=VALUE lines, `#` comments, optional surrounding quotes.
-let readDotEnv (path: string) : (string * string) list =
-    if not (File.Exists path) then []
-    else
-        File.ReadAllLines path
-        |> Array.map _.Trim()
-        |> Array.filter (fun l -> l <> "" && not (l.StartsWith "#") && l.Contains "=")
-        |> Array.map (fun l ->
-            let i = l.IndexOf '='
-            let key = l.Substring(0, i).Trim()
-            let value = l.Substring(i + 1).Trim()
-            let value =
-                if value.Length >= 2 && ((value.StartsWith "\"" && value.EndsWith "\"") || (value.StartsWith "'" && value.EndsWith "'"))
-                then value.Substring(1, value.Length - 2)
-                else value
-            key, value)
-        |> List.ofArray

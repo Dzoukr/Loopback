@@ -1,4 +1,4 @@
-# Secrets and local state are mounted at runtime (docker-compose.yml), never baked into an image
+# Secrets and local state are mounted at runtime (LoopbackDocker's docker-compose.yml), never baked into an image
 config.json
 .env
 data
