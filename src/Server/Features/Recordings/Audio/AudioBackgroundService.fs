@@ -12,6 +12,7 @@ open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
 open Loopback.Server.Configuration
 open Loopback.Server.Integrations
+open Loopback.Server.Features.Recordings.Domain
 open Loopback.Server.Features.Recordings.Database
 open Loopback.Server.Features.Recordings.Audio.AudioStore
 open Loopback.Server.Features.Recordings.Processing.Pipeline
@@ -34,7 +35,8 @@ type AudioBackgroundService(
             let due =
                 candidates
                 |> List.tryFind (fun c ->
-                    (c.MissingPeaks || not (audio.Exists c.Id))
+                    // An upload without audio has nothing to download it from.
+                    (c.MissingPeaks || (c.Source = "plaud" && not (audio.Exists c.Id)))
                     && match failedAt.TryGetValue c.Id with
                        | true, at -> DateTimeOffset.UtcNow - at > retryAfter
                        | _ -> true)
@@ -43,11 +45,11 @@ type AudioBackgroundService(
             | Some c ->
                 try
                     let downloaded = not (audio.Exists c.Id)
-                    let! path = audio.Ensure c.Id
+                    let! path = audio.Ensure(c.Id, RecordingSource.fromKey c.Source)
                     if downloaded then
                         logger.LogInformation("Recording {Id}: audio stored ({Size:N1} MB)", c.Id, float (IO.FileInfo(path).Length) / 1048576.)
                     if c.MissingPeaks then
-                        let! peaks = AudioPeaks.compute path
+                        let! peaks = AudioFiles.computePeaks path
                         do! recordings.SetPeaks(c.Id, JsonSerializer.Serialize peaks)
                         logger.LogInformation("Recording {Id}: waveform peaks computed", c.Id)
                     failedAt.Remove c.Id |> ignore

@@ -1,12 +1,15 @@
 module Loopback.Server.Features.Recordings.API
 
 open System
+open System.IO
 open Giraffe
 open Giraffe.EndpointRouting
 open Microsoft.AspNetCore.Http
+open Microsoft.AspNetCore.Http.Features
 open Microsoft.Extensions.DependencyInjection
 open Loopback.Server.Handlers
 open Loopback.Server.OpenAPI
+open Loopback.Server.Integrations.AudioFiles
 open Loopback.Server.Features.Recordings.Domain
 
 // API contracts use plain .NET types only (no option / list), so the generated
@@ -15,6 +18,8 @@ open Loopback.Server.Features.Recordings.Domain
 type RecordingDto = {
     Id : string
     Filename : string
+    /// plaud | upload
+    Source : string
     StartTime : DateTimeOffset
     DurationMs : int64
     /// synced | queued | transcribing | summarizing | done | failed
@@ -67,6 +72,13 @@ type SuccessResponse = {
     Success : bool
 }
 
+type UploadRecordingResponse = {
+    RecordingId : string
+}
+
+/// Largest accepted upload (90 minutes of 320 kbit/s MP3 is ~210 MB).
+let private maxUploadBytes = 1024L * 1024L * 1024L
+
 let private orNull (o: string option) = Option.toObj o
 let private orNullable (o: DateTimeOffset option) = Option.toNullable o
 
@@ -80,6 +92,7 @@ let private getRecordings (ctx: HttpContext) =
                 {
                     Id = r.Id
                     Filename = r.Filename
+                    Source = RecordingSource.toKey r.Source
                     StartTime = r.StartTime
                     DurationMs = r.DurationMs
                     Status = RecordingStatus.toKey r.Status
@@ -115,14 +128,14 @@ let private getSyncStatus (ctx: HttpContext) =
         }
     }
 
-/// The locally stored Ogg/Opus file, with HTTP Range support for seeking.
+/// The locally stored audio (Ogg, or MP3 for some uploads), with HTTP Range support for seeking.
 let private getAudio (recordingId: string) : HttpHandler =
     fun next ctx -> task {
         let queries = ctx.RequestServices.GetRequiredService<RecordingsQueries>()
         let! path = queries.GetAudioFile recordingId
         match path with
         | Some p ->
-            ctx.SetContentType "audio/ogg"
+            ctx.SetContentType(AudioFormat.contentTypeOf p)
             return! streamFile true p None None next ctx
         | None -> return! RequestErrors.NOT_FOUND $"Recording {recordingId} not found" next ctx
     }
@@ -157,6 +170,59 @@ let private deleteRecording (ctx: HttpContext) =
         let commandHandler = ctx.RequestServices.GetRequiredService<RecordingsCommandHandler>()
         let! _ = commandHandler.Handle(DeleteRecording { RecordingId = req.RecordingId })
         return { Success = true }
+    }
+
+/// Multipart form: `file` (MP3 or Ogg Vorbis / Opus), optional `startTime` (unix ms, default now),
+/// `utcOffsetMinutes` (the recording's local offset, e.g. 120 for UTC+02:00) and `workflow`
+/// (queue it right away). 400 with the reason when the file is not usable audio.
+let private uploadRecording : HttpHandler =
+    fun next ctx -> task {
+        match ctx.Features.Get<IHttpMaxRequestBodySizeFeature>() with
+        | null -> ()
+        | f when f.IsReadOnly -> ()
+        | f -> f.MaxRequestBodySize <- Nullable maxUploadBytes
+        ctx.Features.Set<IFormFeature>(FormFeature(ctx.Request, FormOptions(MultipartBodyLengthLimit = maxUploadBytes)))
+        let! form = ctx.Request.ReadFormAsync()
+        match form.Files.GetFile "file" with
+        | null -> return! (setStatusCode 400 >=> text "No file uploaded (form field 'file')") next ctx
+        | file ->
+            let field (name: string) = match string form[name] with | "" -> None | v -> Some v
+            let startTime =
+                match field "startTime" |> Option.map Int64.TryParse with
+                | Some(true, ms) -> DateTimeOffset.FromUnixTimeMilliseconds ms
+                | _ -> DateTimeOffset.UtcNow
+            let utcOffsetMinutes =
+                match field "utcOffsetMinutes" |> Option.map Int32.TryParse with
+                | Some(true, m) -> m
+                | _ -> int (TimeZoneInfo.Local.GetUtcOffset startTime).TotalMinutes
+            let filename =
+                match Path.GetFileNameWithoutExtension file.FileName with
+                | null | "" -> "Upload"
+                | n -> n
+            // The original name is never part of a path; the format is detected from the content.
+            let temp = Path.Combine(Path.GetTempPath(), $"loopback-upload-{Guid.NewGuid():N}")
+            try
+                do! task {
+                    use s = File.Create temp
+                    do! file.CopyToAsync s
+                }
+                let commandHandler = ctx.RequestServices.GetRequiredService<RecordingsCommandHandler>()
+                try
+                    let! events =
+                        commandHandler.Handle(UploadRecording {
+                            AudioFile = temp
+                            Filename = filename
+                            StartTime = startTime
+                            UtcOffsetMinutes = utcOffsetMinutes
+                            Workflow = field "workflow" })
+                    let id = events |> List.pick (function RecordingUploaded e -> Some e.RecordingId | _ -> None)
+                    return! json { RecordingId = id } next ctx
+                with
+                | UnsupportedAudio message
+                // e.g. unknown workflow (CommandHandler fails with a plain message)
+                | Failure message -> return! (setStatusCode 400 >=> text message) next ctx
+            finally
+                if File.Exists temp then File.Delete temp
     }
 
 let private syncNow (ctx: HttpContext) =
@@ -196,5 +262,8 @@ let api =
 
             route "/sync" (simpleJson syncNow)
             |> jsonOut<SuccessResponse> "syncNow"
+
+            // Multipart, not part of the generated client - the web app streams it through (app/api/recordings/upload).
+            route "/upload" uploadRecording
         ]
     ]

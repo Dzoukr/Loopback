@@ -34,6 +34,8 @@ type RecordingRow = {
     UtcOffsetMinutes : int64 option
     /// Result file JSON of a done recording (Migrations/005_Result.sql).
     Result : string option
+    /// plaud | upload (Migrations/007_Source.sql).
+    Source : string
 }
 
 [<CLIMutable>]
@@ -61,6 +63,7 @@ type PlaudConnectionRow = {
 [<CLIMutable>]
 type AudioCandidateRow = {
     Id : string
+    Source : string
     /// SQLite boolean (0 / 1).
     MissingPeaks : int64
 }
@@ -112,8 +115,8 @@ type RecordingsRepository(factory: DbConnectionFactory) =
             use conn = factory.Open()
             let! rows =
                 conn.QueryAsync<AudioCandidateRow>(
-                    "SELECT Id, Peaks IS NULL AS MissingPeaks FROM Recordings WHERE Status <> 'deleted' ORDER BY StartTime DESC")
-            return rows |> Seq.map (fun r -> {| Id = r.Id; MissingPeaks = r.MissingPeaks <> 0L |}) |> List.ofSeq
+                    "SELECT Id, Source, Peaks IS NULL AS MissingPeaks FROM Recordings WHERE Status <> 'deleted' ORDER BY StartTime DESC")
+            return rows |> Seq.map (fun r -> {| Id = r.Id; Source = r.Source; MissingPeaks = r.MissingPeaks <> 0L |}) |> List.ofSeq
         }
 
     /// Done recordings without a stored result (processed before results were stored).
@@ -154,15 +157,15 @@ type RecordingsRepository(factory: DbConnectionFactory) =
             return ()
         }
 
-    /// Rows that may be removed once their Plaud file is gone: processed (done), never-processed
-    /// (synced) and deleted-in-Loopback ones. Failed / in-progress rows are kept.
+    /// Plaud rows that may be removed once their Plaud file is gone: processed (done), never-processed
+    /// (synced) and deleted-in-Loopback ones. Failed / in-progress rows and uploads are kept.
     member _.GetRemovableIfGoneFromPlaud() =
         task {
             use conn = factory.Open()
             let! rows =
                 select {
                     for r in recordingsTable do
-                    where (r.Status = "done" || r.Status = "synced" || r.Status = "deleted")
+                    where (r.Source = "plaud" && (r.Status = "done" || r.Status = "synced" || r.Status = "deleted"))
                 } |> conn.SelectAsync<RecordingRow>
             return List.ofSeq rows
         }
@@ -174,9 +177,20 @@ type RecordingsRepository(factory: DbConnectionFactory) =
             let! deleted =
                 delete {
                     for r in recordingsTable do
-                    where (r.Id = id && (r.Status = "done" || r.Status = "synced" || r.Status = "deleted"))
+                    where (r.Id = id && r.Source = "plaud" && (r.Status = "done" || r.Status = "synced" || r.Status = "deleted"))
                 } |> conn.DeleteAsync
             return deleted > 0
+        }
+
+    member _.Delete(id: string) =
+        task {
+            use conn = factory.Open()
+            let! _ =
+                delete {
+                    for r in recordingsTable do
+                    where (r.Id = id)
+                } |> conn.DeleteAsync
+            return ()
         }
 
     member _.Insert(row: RecordingRow) =

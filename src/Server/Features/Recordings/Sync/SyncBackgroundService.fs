@@ -61,6 +61,7 @@ type SyncBackgroundService(
                     Peaks = None
                     UtcOffsetMinutes = Some(int64 f.UtcOffsetMinutes)
                     Result = None
+                    Source = RecordingSource.toKey Plaud
                 }
                 return Some true
             // Also backfills the offset of rows synced before it was stored.

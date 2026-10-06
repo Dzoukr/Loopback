@@ -40,11 +40,29 @@ module RecordingStatus =
         | "deleted" -> Deleted
         | other -> failwith $"Unknown recording status '{other}'"
 
+/// Where a recording comes from: synced from Plaud, or an audio file uploaded in the UI.
+type RecordingSource =
+    | Plaud
+    | Upload
+
+module RecordingSource =
+    let toKey =
+        function
+        | Plaud -> "plaud"
+        | Upload -> "upload"
+
+    let fromKey =
+        function
+        | "plaud" -> Plaud
+        | "upload" -> Upload
+        | other -> failwith $"Unknown recording source '{other}'"
+
 /// Query Models - Read-side representations
 module Queries =
     type Recording = {
         Id : string
         Filename : string
+        Source : RecordingSource
         StartTime : DateTimeOffset
         DurationMs : int64
         Status : RecordingStatus
@@ -103,12 +121,24 @@ module CommandArgs =
         RecordingId : string
     }
 
+    type UploadRecording = {
+        /// Uploaded file (MP3 or Ogg); the caller deletes it afterwards.
+        AudioFile : string
+        /// Original file name, without extension - the title until the workflow names it.
+        Filename : string
+        StartTime : DateTimeOffset
+        UtcOffsetMinutes : int
+        /// Queue it for processing right away.
+        Workflow : string option
+    }
+
 /// Command Union Type - All possible write operations
 type Command =
     | ProcessRecording of CommandArgs.ProcessRecording
     | RetryRecording of CommandArgs.RetryRecording
     | ReprocessRecording of CommandArgs.ReprocessRecording
     | DeleteRecording of CommandArgs.DeleteRecording
+    | UploadRecording of CommandArgs.UploadRecording
     | SyncNow
 
 /// Event Arguments
@@ -116,6 +146,11 @@ module EventArgs =
     type RecordingQueued = {
         RecordingId : string
         Workflow : string
+    }
+
+    type RecordingUploaded = {
+        RecordingId : string
+        Workflow : string option
     }
 
     type RecordingRetried = {
@@ -129,6 +164,7 @@ type Event =
     | RecordingRetried of EventArgs.RecordingRetried
     | RecordingReprocessQueued of EventArgs.RecordingQueued
     | RecordingDeleted of recordingId: string
+    | RecordingUploaded of EventArgs.RecordingUploaded
     | SyncRequested
 
 /// Command Handler Interface - Write operations

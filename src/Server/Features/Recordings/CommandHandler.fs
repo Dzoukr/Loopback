@@ -1,7 +1,10 @@
 module Loopback.Server.Features.Recordings.CommandHandler
 
+open System
+open System.IO
 open Loopback.Server
 open Loopback.Server.Integrations.Speechmatics
+open Loopback.Server.Integrations.AudioFiles
 open Loopback.Server.Features.Recordings.Domain
 open Loopback.Server.Features.Recordings.Database
 open Loopback.Server.Features.Recordings.Sync.SyncTrigger
@@ -64,10 +67,57 @@ type StorageCommandHandler(recordings: RecordingsRepository, workflows: Workflow
                 return [ RecordingReprocessQueued { RecordingId = r.Id; Workflow = args.Workflow } ]
         }
 
+    /// Stores the uploaded MP3 / Ogg file as-is in the audio store and adds it as a new recording
+    /// (queued right away when a workflow is given). The waveform is computed by the audio job.
+    let uploadRecording (args: CommandArgs.UploadRecording) =
+        task {
+            match args.Workflow with
+            | Some w when (workflows.TryLoad w).IsNone -> failwith $"Unknown workflow '{w}'"
+            | _ -> ()
+            let format =
+                match detect args.AudioFile with
+                | Some f -> f
+                | None -> raise (UnsupportedAudio "not an MP3 or Ogg (Vorbis / Opus) file")
+            let length = duration args.AudioFile format
+            let id = $"upload-{Guid.NewGuid():N}"
+            let path = audio.Import(id, args.AudioFile, format)
+            try
+                let now = Db.now ()
+                do! recordings.Insert {
+                    Id = id
+                    Filename = args.Filename
+                    StartTime = args.StartTime.ToUnixTimeMilliseconds()
+                    DurationMs = int64 length.TotalMilliseconds
+                    Filesize = FileInfo(path).Length
+                    VersionMs = ""
+                    Status = RecordingStatus.toKey (if args.Workflow.IsSome then Queued else Synced)
+                    Workflow = args.Workflow
+                    Title = None
+                    Error = None
+                    FailedStep = None
+                    SpeechmaticsJobId = None
+                    Transcript = None
+                    OutputFile = None
+                    StepStartedAt = None
+                    CreatedAt = now
+                    UpdatedAt = now
+                    DeletedAt = None
+                    Peaks = None
+                    UtcOffsetMinutes = Some(int64 args.UtcOffsetMinutes)
+                    Result = None
+                    Source = RecordingSource.toKey Upload
+                }
+            with ex ->
+                audio.Delete id
+                Runtime.ExceptionServices.ExceptionDispatchInfo.Throw ex
+            return [ RecordingUploaded { RecordingId = id; Workflow = args.Workflow } ]
+        }
+
     /// Hides the recording in Loopback. Plaud has no known delete API, so the row stays as a
     /// tombstone (the sync skips it) until the file is deleted in Plaud too; stored transcript and
     /// result are cleared and the local audio is removed, the result file in output/ is kept. A running transcription job is removed
     /// from Speechmatics; a step already in progress notices the status change and drops its work.
+    /// An upload has no Plaud file to wait for, so its row and audio are removed right away.
     let deleteRecording (args: CommandArgs.DeleteRecording) =
         task {
             let! row = recordings.TryGet args.RecordingId
@@ -78,15 +128,18 @@ type StorageCommandHandler(recordings: RecordingsRepository, workflows: Workflow
                 match r.SpeechmaticsJobId with
                 | Some jobId -> try do! speechmatics.Delete jobId with _ -> ()
                 | None -> ()
-                do! recordings.Update {
-                    r with
-                        Status = RecordingStatus.toKey Deleted
-                        Transcript = None
-                        Result = None
-                        SpeechmaticsJobId = None
-                        Error = None
-                        FailedStep = None
-                        DeletedAt = Some(Db.now ()) }
+                if r.Source = RecordingSource.toKey Upload then
+                    do! recordings.Delete r.Id
+                else
+                    do! recordings.Update {
+                        r with
+                            Status = RecordingStatus.toKey Deleted
+                            Transcript = None
+                            Result = None
+                            SpeechmaticsJobId = None
+                            Error = None
+                            FailedStep = None
+                            DeletedAt = Some(Db.now ()) }
                 try audio.Delete r.Id with _ -> ()
                 return [ RecordingDeleted r.Id ]
         }
@@ -99,6 +152,7 @@ type StorageCommandHandler(recordings: RecordingsRepository, workflows: Workflow
                 | RetryRecording args -> return! retryRecording args
                 | ReprocessRecording args -> return! reprocessRecording args
                 | DeleteRecording args -> return! deleteRecording args
+                | UploadRecording args -> return! uploadRecording args
                 | SyncNow ->
                     syncTrigger.Request()
                     return [ SyncRequested ]

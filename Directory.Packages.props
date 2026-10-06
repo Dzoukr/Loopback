@@ -14,9 +14,11 @@
     <PackageVersion Include="Dapper.FSharp" Version="4.10.0" />
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <PackageVersion Include="JsonSchema.Net" Version="9.4.0" />
-    <!-- Audio (Opus decoding for waveform peaks, pure .NET) -->
+    <!-- Audio decoding for waveform peaks and uploads, pure .NET: Opus (Plaud), MP3, Ogg/Vorbis -->
     <PackageVersion Include="Concentus" Version="2.2.2" />
     <PackageVersion Include="Concentus.Oggfile" Version="1.0.7" />
+    <PackageVersion Include="NLayer" Version="3.0.0" />
+    <PackageVersion Include="NVorbis" Version="0.10.5" />
     <!-- Crypto (Plaud password encryption: ECIES over secp256k1, AES-GCM with a 16-byte nonce) -->
     <PackageVersion Include="BouncyCastle.Cryptography" Version="2.7.0" />
     <!-- FSharp -->

@@ -5,6 +5,8 @@ import type { WorkflowDto, RecordingDto, SyncStatusDto } from "@/lib/generated/a
 import { getWorkflows, getRecordings, getSyncStatus, syncNow } from "./actions";
 import { RecordingCard } from "./recordingCard";
 import { SyncAlerts, SyncControls } from "./syncStatusBar";
+import { acceptAttribute, isAcceptedAudio } from "./upload";
+import { toUploadItems, UploadDialog, type UploadItem } from "./uploadDialog";
 import { groupOf, type RecordingGroup } from "./utils";
 
 // The list refreshes itself; processing runs in the backend's background jobs.
@@ -27,6 +29,10 @@ export function RecordingsContent() {
     const [filter, setFilter] = useState<RecordingGroup | null>(null);
 
     const workflowsLoaded = useRef(false);
+    // Upload dialog rows (open while non-empty), fed by drag & drop anywhere on the page or the Upload button.
+    const [uploads, setUploads] = useState<UploadItem[]>([]);
+    const [dragging, setDragging] = useState(false);
+    const fileInput = useRef<HTMLInputElement>(null);
 
     const refresh = useCallback(async () => {
         try {
@@ -51,6 +57,52 @@ export function RecordingsContent() {
         return () => clearInterval(timer);
     }, [refresh]);
 
+    const addFiles = useCallback((files: File[]) => {
+        const rejected = files.filter((f) => !isAcceptedAudio(f));
+        if (rejected.length > 0) setError(`Only MP3 and OGG files can be uploaded: ${rejected.map((f) => f.name).join(", ")}`);
+        const accepted = files.filter(isAcceptedAudio);
+        if (accepted.length > 0) setUploads((all) => [...all, ...toUploadItems(accepted)]);
+    }, []);
+
+    useEffect(() => {
+        // dragenter/leave fire for every child element, so count the depth.
+        let depth = 0;
+        const hasFiles = (e: DragEvent) => e.dataTransfer?.types.includes("Files") ?? false;
+        const onEnter = (e: DragEvent) => {
+            if (!hasFiles(e)) return;
+            e.preventDefault();
+            depth++;
+            setDragging(true);
+        };
+        const onOver = (e: DragEvent) => {
+            if (!hasFiles(e)) return;
+            e.preventDefault();
+            if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+        };
+        const onLeave = (e: DragEvent) => {
+            if (!hasFiles(e)) return;
+            depth = Math.max(0, depth - 1);
+            if (depth === 0) setDragging(false);
+        };
+        const onDrop = (e: DragEvent) => {
+            if (!hasFiles(e)) return;
+            e.preventDefault();
+            depth = 0;
+            setDragging(false);
+            addFiles(Array.from(e.dataTransfer?.files ?? []));
+        };
+        window.addEventListener("dragenter", onEnter);
+        window.addEventListener("dragover", onOver);
+        window.addEventListener("dragleave", onLeave);
+        window.addEventListener("drop", onDrop);
+        return () => {
+            window.removeEventListener("dragenter", onEnter);
+            window.removeEventListener("dragover", onOver);
+            window.removeEventListener("dragleave", onLeave);
+            window.removeEventListener("drop", onDrop);
+        };
+    }, [addFiles]);
+
     const handleSyncNow = async () => {
         setSyncing(true);
         try {
@@ -74,9 +126,24 @@ export function RecordingsContent() {
                     </div>
                     <div className="leading-tight">
                         <div className="text-lg font-semibold tracking-tight">Loopback</div>
-                        <div className="hidden text-xs text-base-content/55 sm:block">Plaud → Speechmatics → Claude → JSON</div>
+                        <div className="hidden text-xs text-base-content/55 sm:block">Plaud / upload → Speechmatics → Claude → JSON</div>
                     </div>
-                    <div className="ml-auto">
+                    <div className="ml-auto flex items-center gap-2 sm:gap-3">
+                        <button className="btn btn-sm btn-primary btn-soft rounded-full" onClick={() => fileInput.current?.click()} title="Upload audio files (or drop them anywhere on the page)">
+                            <i className="fa-solid fa-upload"></i>
+                            <span className="hidden sm:inline">Upload</span>
+                        </button>
+                        <input
+                            ref={fileInput}
+                            type="file"
+                            accept={acceptAttribute}
+                            multiple
+                            hidden
+                            onChange={(e) => {
+                                addFiles(Array.from(e.target.files ?? []));
+                                e.target.value = "";
+                            }}
+                        />
                         <SyncControls status={syncStatus} syncing={syncing} onSyncNow={handleSyncNow} />
                     </div>
                 </div>
@@ -87,7 +154,7 @@ export function RecordingsContent() {
                     <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
                         Your <span className="text-gradient">recordings</span>
                     </h1>
-                    <p className="mt-1 text-base-content/60">Synced from Plaud, transcribed, and summarized by your workflows.</p>
+                    <p className="mt-1 text-base-content/60">Synced from Plaud or uploaded, transcribed, and summarized by your workflows.</p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -133,7 +200,7 @@ export function RecordingsContent() {
                             <i className="fa-solid fa-inbox"></i>
                         </div>
                         <p className="font-medium">No recordings yet</p>
-                        <p className="text-sm text-base-content/60">New Plaud recordings appear here after the next sync.</p>
+                        <p className="text-sm text-base-content/60">New Plaud recordings appear here after the next sync - or drop an MP3 / OGG file here.</p>
                     </div>
                 )}
 
@@ -163,6 +230,20 @@ export function RecordingsContent() {
                     );
                 })}
             </main>
+
+            {dragging && (
+                <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-base-300/70 p-6 backdrop-blur-sm">
+                    <div className="flex flex-col items-center gap-3 rounded-box border-2 border-dashed border-primary/60 bg-base-100/80 px-12 py-10 text-center">
+                        <div className="flex size-14 items-center justify-center rounded-2xl bg-primary/12 text-2xl text-primary">
+                            <i className="fa-solid fa-file-arrow-up"></i>
+                        </div>
+                        <p className="font-medium">Drop audio files to upload</p>
+                        <p className="text-sm text-base-content/60">MP3 or OGG</p>
+                    </div>
+                </div>
+            )}
+
+            {uploads.length > 0 && <UploadDialog items={uploads} setItems={setUploads} workflows={workflows} onUploaded={refresh} />}
         </>
     );
 }

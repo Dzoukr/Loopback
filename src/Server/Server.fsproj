@@ -15,9 +15,9 @@
     <Compile Include="Configuration.fs" />
     <Compile Include="Db.fs" />
     <Compile Include="Integrations\Plaud.fs" />
+    <Compile Include="Integrations\AudioFiles.fs" />
     <Compile Include="Integrations\Speechmatics.fs" />
     <Compile Include="Integrations\ClaudeBridge.fs" />
-    <Compile Include="Integrations\AudioPeaks.fs" />
     <Compile Include="Features\Recordings\Domain.fs" />
     <Compile Include="Features\Recordings\Database.fs" />
     <Compile Include="Features\Recordings\Sync\PlaudSession.fs" />
@@ -45,6 +45,8 @@
     <PackageReference Include="JsonSchema.Net" />
     <PackageReference Include="Concentus" />
     <PackageReference Include="Concentus.Oggfile" />
+    <PackageReference Include="NLayer" />
+    <PackageReference Include="NVorbis" />
     <PackageReference Include="BouncyCastle.Cryptography" />
   </ItemGroup>
 </Project>

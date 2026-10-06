@@ -13,6 +13,7 @@ let private toRecording (r: RecordingRow) : Queries.Recording =
     {
         Id = r.Id
         Filename = r.Filename
+        Source = RecordingSource.fromKey r.Source
         StartTime = toDate r.StartTime
         DurationMs = r.DurationMs
         Status = RecordingStatus.fromKey r.Status
@@ -64,7 +65,7 @@ type StorageQueries(recordings: RecordingsRepository, workflows: WorkflowCatalog
                 let! row = recordings.TryGet recordingId
                 match row with
                 | Some r when r.Status <> RecordingStatus.toKey Deleted ->
-                    let! path = audio.Ensure r.Id
+                    let! path = audio.Ensure(r.Id, RecordingSource.fromKey r.Source)
                     return Some path
                 | _ -> return None
             }

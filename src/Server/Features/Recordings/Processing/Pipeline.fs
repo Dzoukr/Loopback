@@ -95,7 +95,7 @@ type Pipeline(
     /// queued -> transcribing: uploads the locally stored audio (downloaded first if still missing).
     member _.StartTranscription(r: RecordingRow) =
         task {
-            let! audioPath = audio.Ensure r.Id
+            let! audioPath = audio.Ensure(r.Id, RecordingSource.fromKey r.Source)
             let! jobId = speechmatics.Submit audioPath
             logger.LogInformation("Recording {Id}: Speechmatics job {JobId} submitted", r.Id, jobId)
             let! ok = stillIn r.Id Queued
@@ -208,14 +208,15 @@ type Pipeline(
                 match title with
                 | Ok t -> cleanTitle t.Result |> Option.defaultValue r.Filename
                 | Error e ->
-                    logger.LogWarning("Recording {Id}: title run failed ({Error}), using the Plaud filename", r.Id, describe e)
+                    logger.LogWarning("Recording {Id}: title run failed ({Error}), using the filename", r.Id, describe e)
                     r.Filename
 
             // Fixed envelope; only `content` varies by workflow (its schema).
             let envelope = JsonObject()
             envelope["title"] <- JsonValue.Create finalTitle
             envelope["workflow"] <- JsonValue.Create workflow.Name
-            envelope["plaudFileId"] <- JsonValue.Create r.Id
+            envelope["sourceName"] <- JsonValue.Create r.Source
+            envelope["sourceId"] <- JsonValue.Create r.Id
             envelope["recordedAt"] <- JsonValue.Create(recordedAt.ToString "o")
             envelope["durationSeconds"] <- JsonValue.Create(r.DurationMs / 1000L)
             envelope["processedAt"] <- JsonValue.Create(DateTimeOffset.UtcNow.ToString "o")
@@ -231,6 +232,6 @@ type Pipeline(
                 File.Move(temp, path, true)
                 logger.LogInformation("Recording {Id}: wrote {File}", r.Id, fileName)
 
-                // Tombstone: done recordings are never re-synced from Plaud.
+                // Tombstone: done recordings are never re-synced from Plaud (harmless for uploads).
                 do! recordings.Update { setStatus r Done with Title = Some finalTitle; OutputFile = Some fileName; Result = Some(envelope.ToJsonString()); DeletedAt = Some(Db.now ()) }
         }

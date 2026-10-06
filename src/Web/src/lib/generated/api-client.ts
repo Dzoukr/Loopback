@@ -22,6 +22,7 @@ export interface ProcessRecordingRequest {
 export interface RecordingDto {
   id: string;
   filename: string;
+  source: string;
   /** @format date-time */
   startTime: string;
   /** @format int64 */

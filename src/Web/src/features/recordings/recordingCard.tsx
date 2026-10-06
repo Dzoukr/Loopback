@@ -55,11 +55,15 @@ export function RecordingCard({ recording, workflows, onChanged, onError }: Prop
     const process = () => run(() => processRecording(recording.id, workflow), "Could not start processing.");
     const retry = () => run(() => retryRecording(recording.id), "Could not retry the recording.");
     const reprocess = () => run(() => reprocessRecording(recording.id, workflow), "Could not reprocess the recording.");
+    const uploaded = recording.source === "upload";
     const remove = () => {
         const name = recording.title ?? recording.filename;
+        const consequence = uploaded
+            ? "The uploaded audio is removed for good; result files in the output folder are kept."
+            : "The recording stays in Plaud (Loopback ignores it from now on) and result files in the output folder are kept.";
         if (!window.confirm(`Delete "${name}" from Loopback?
 
-The recording stays in Plaud (Loopback ignores it from now on) and result files in the output folder are kept.`)) return;
+${consequence}`)) return;
         run(() => deleteRecording(recording.id), "Could not delete the recording.");
     };
 
@@ -93,6 +97,11 @@ The recording stays in Plaud (Loopback ignores it from now on) and result files 
                         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-base-content/60">
                             <span><i className="fa-regular fa-calendar mr-1.5"></i>{formatDateTime(recording.startTime)}</span>
                             <span><i className="fa-regular fa-clock mr-1.5"></i>{formatDuration(recording.durationMs)}</span>
+                            {uploaded && (
+                                <span className="rounded-full bg-base-content/8 px-2 py-0.5 font-medium" title="Uploaded audio file, not from Plaud">
+                                    <i className="fa-solid fa-upload mr-1.5"></i>Uploaded
+                                </span>
+                            )}
                             {recording.workflow && (
                                 <span className="rounded-full bg-base-content/8 px-2 py-0.5 font-medium">
                                     <i className="fa-solid fa-diagram-project mr-1.5"></i>{recording.workflow}
@@ -132,7 +141,7 @@ The recording stays in Plaud (Loopback ignores it from now on) and result files 
                     </div>
                 )}
 
-                {/* Playable in every state - the audio is stored locally until the file is deleted in Plaud. */}
+                {/* Playable in every state - the audio is stored locally until the file is deleted in Plaud (uploads: in Loopback). */}
                 <div className="rounded-xl bg-base-200/60 px-3 py-2">
                     <AudioPlayer recordingId={recording.id} durationMs={recording.durationMs} peaks={recording.peaks} onError={onError} />
                 </div>

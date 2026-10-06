@@ -109,7 +109,7 @@ type SpeechmaticsClient(http: HttpClient, apiKey: string, model: string, languag
             use form = new MultipartFormDataContent()
             form.Add(new StringContent(config.ToJsonString(), Encoding.UTF8), "config")
             let audio = new StreamContent(File.OpenRead audioPath)
-            audio.Headers.ContentType <- MediaTypeHeaderValue "audio/ogg"
+            audio.Headers.ContentType <- MediaTypeHeaderValue(AudioFiles.AudioFormat.contentTypeOf audioPath)
             form.Add(audio, "data_file", Path.GetFileName audioPath)
             let! r = send HttpMethod.Post "/jobs" (Some form)
             match str (get (parse "POST /jobs" r) [ "id" ]) with
