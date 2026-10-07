@@ -10,6 +10,11 @@
  * ---------------------------------------------------------------
  */
 
+export interface DeleteProcessedResponse {
+  /** @format int32 */
+  deleted: number;
+}
+
 export interface DeleteRecordingRequest {
   recordingId: string;
 }
@@ -38,6 +43,7 @@ export interface RecordingDto {
   peaks: null | number[];
   result: string;
   canReprocess: boolean;
+  hasTranscript: boolean;
 }
 
 export interface ReprocessRecordingRequest {
@@ -59,6 +65,15 @@ export interface SyncStatusDto {
   lastSyncAt: string;
   lastError: string;
   account: string;
+}
+
+export interface TranscriptSegmentDto {
+  speaker: string;
+  /** @format double */
+  start: number;
+  /** @format double */
+  end: number;
+  text: string;
 }
 
 export interface WorkflowDto {
@@ -298,6 +313,21 @@ export class Api<
      * No description
      *
      * @tags Server
+     * @name GetTranscript
+     * @request GET:/api/recordings/{id}/transcript
+     */
+    getTranscript: (id: string, params: RequestParams = {}) =>
+      this.request<TranscriptSegmentDto[], any>({
+        path: `/api/recordings/${id}/transcript`,
+        method: "GET",
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * No description
+     *
+     * @tags Server
      * @name ProcessRecording
      * @request POST:/api/recordings/process
      */
@@ -367,6 +397,21 @@ export class Api<
         method: "POST",
         body: data,
         type: "application/json",
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * No description
+     *
+     * @tags Server
+     * @name DeleteProcessed
+     * @request POST:/api/recordings/delete-processed
+     */
+    deleteProcessed: (params: RequestParams = {}) =>
+      this.request<DeleteProcessedResponse, any>({
+        path: `/api/recordings/delete-processed`,
+        method: "POST",
         format: "json",
         ...params,
       }),

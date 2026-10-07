@@ -1,7 +1,7 @@
 "use server";
 
 import { createApiClient } from "@/api";
-import type { WorkflowDto, RecordingDto, SyncStatusDto } from "@/lib/generated/api-client";
+import type { WorkflowDto, RecordingDto, SyncStatusDto, TranscriptSegmentDto } from "@/lib/generated/api-client";
 
 // Every backend call goes through these server actions (BFF) - components never call the backend.
 // The audio is binary, so it goes through a route handler instead (app/api/recordings/[id]/audio).
@@ -18,6 +18,12 @@ export async function getWorkflows(): Promise<WorkflowDto[]> {
 
 export async function getSyncStatus(): Promise<SyncStatusDto> {
     const response = await createApiClient().getSyncStatus();
+    return response.data;
+}
+
+/** Speaker segments of the stored transcript (empty until transcription finished). */
+export async function getTranscript(recordingId: string): Promise<TranscriptSegmentDto[]> {
+    const response = await createApiClient().getTranscript(encodeURIComponent(recordingId));
     return response.data;
 }
 
@@ -41,4 +47,10 @@ export async function reprocessRecording(recordingId: string, workflow: string):
 /** Hides the recording in Loopback (Plaud keeps the file). */
 export async function deleteRecording(recordingId: string): Promise<void> {
     await createApiClient().deleteRecording({ recordingId });
+}
+
+/** Deletes every processed recording, like deleteRecording does one; returns how many. */
+export async function deleteProcessed(): Promise<number> {
+    const response = await createApiClient().deleteProcessed();
+    return response.data.deleted;
 }

@@ -144,6 +144,19 @@ type StorageCommandHandler(recordings: RecordingsRepository, workflows: Workflow
                 return [ RecordingDeleted r.Id ]
         }
 
+    /// Done recordings only - one reprocessing meanwhile (summarizing) is left alone.
+    let deleteProcessed () =
+        task {
+            // Not GetByStatus: it skips tombstoned rows, and done recordings are tombstoned on purpose.
+            let! all = recordings.GetAll()
+            let ids = all |> List.filter (fun r -> r.Status = RecordingStatus.toKey Done) |> List.map (fun r -> r.Id)
+            let events = ResizeArray<Event>()
+            for id in ids do
+                let! e = deleteRecording { RecordingId = id }
+                events.AddRange e
+            return List.ofSeq events
+        }
+
     interface RecordingsCommandHandler with
         member _.Handle command =
             task {
@@ -153,6 +166,7 @@ type StorageCommandHandler(recordings: RecordingsRepository, workflows: Workflow
                 | ReprocessRecording args -> return! reprocessRecording args
                 | DeleteRecording args -> return! deleteRecording args
                 | UploadRecording args -> return! uploadRecording args
+                | DeleteProcessed -> return! deleteProcessed ()
                 | SyncNow ->
                     syncTrigger.Request()
                     return [ SyncRequested ]

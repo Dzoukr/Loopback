@@ -78,6 +78,17 @@ module Queries =
         Result : string option
         /// Done and a transcript is stored, so the workflow can run again without transcribing.
         CanReprocess : bool
+        /// The transcript is stored (transcription finished), viewable via GetTranscript.
+        HasTranscript : bool
+    }
+
+    /// One speaker turn of the stored transcript.
+    type TranscriptSegment = {
+        Speaker : string
+        /// Seconds from the start of the recording.
+        Start : float
+        End : float
+        Text : string
     }
 
     type Workflow = {
@@ -100,6 +111,8 @@ type RecordingsQueries =
     abstract member GetSyncStatus : unit -> Task<Queries.SyncStatus>
     /// Path of the locally stored audio (downloaded from Plaud first if still missing); None for an unknown or deleted recording.
     abstract member GetAudioFile : string -> Task<string option>
+    /// Speaker segments of the stored transcript; empty for an unknown recording or one not transcribed yet.
+    abstract member GetTranscript : string -> Task<Queries.TranscriptSegment list>
 
 /// Command Arguments
 module CommandArgs =
@@ -139,6 +152,8 @@ type Command =
     | ReprocessRecording of CommandArgs.ReprocessRecording
     | DeleteRecording of CommandArgs.DeleteRecording
     | UploadRecording of CommandArgs.UploadRecording
+    /// Deletes every processed (done) recording, as DeleteRecording does one.
+    | DeleteProcessed
     | SyncNow
 
 /// Event Arguments

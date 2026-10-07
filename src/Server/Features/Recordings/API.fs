@@ -36,6 +36,17 @@ type RecordingDto = {
     Result : string
     /// Done with a stored transcript: the workflow can run again without transcribing.
     CanReprocess : bool
+    /// Transcription finished and the transcript is stored (see getTranscript).
+    HasTranscript : bool
+}
+
+type TranscriptSegmentDto = {
+    /// Speechmatics speaker label (S1, S2, ... or UU for unknown).
+    Speaker : string
+    /// Seconds from the start of the recording.
+    Start : float
+    End : float
+    Text : string
 }
 
 type WorkflowDto = {
@@ -72,6 +83,11 @@ type SuccessResponse = {
     Success : bool
 }
 
+type DeleteProcessedResponse = {
+    /// Number of recordings deleted.
+    Deleted : int
+}
+
 type UploadRecordingResponse = {
     RecordingId : string
 }
@@ -105,6 +121,7 @@ let private getRecordings (ctx: HttpContext) =
                     Peaks = Option.toObj r.Peaks
                     Result = orNull r.Result
                     CanReprocess = r.CanReprocess
+                    HasTranscript = r.HasTranscript
                 })
             |> Array.ofList
     }
@@ -126,6 +143,17 @@ let private getSyncStatus (ctx: HttpContext) =
             LastError = orNull s.LastError
             Account = orNull s.Account
         }
+    }
+
+/// Empty when the recording is unknown or not transcribed yet.
+let private getTranscript (recordingId: string) (ctx: HttpContext) =
+    task {
+        let queries = ctx.RequestServices.GetRequiredService<RecordingsQueries>()
+        let! segments = queries.GetTranscript recordingId
+        return
+            segments
+            |> List.map (fun s -> { Speaker = s.Speaker; Start = s.Start; End = s.End; Text = s.Text })
+            |> Array.ofList
     }
 
 /// The locally stored audio (Ogg, or MP3 for some uploads), with HTTP Range support for seeking.
@@ -170,6 +198,13 @@ let private deleteRecording (ctx: HttpContext) =
         let commandHandler = ctx.RequestServices.GetRequiredService<RecordingsCommandHandler>()
         let! _ = commandHandler.Handle(DeleteRecording { RecordingId = req.RecordingId })
         return { Success = true }
+    }
+
+let private deleteProcessed (ctx: HttpContext) =
+    task {
+        let commandHandler = ctx.RequestServices.GetRequiredService<RecordingsCommandHandler>()
+        let! events = commandHandler.Handle DeleteProcessed
+        return { Deleted = events |> List.filter (function RecordingDeleted _ -> true | _ -> false) |> List.length }
     }
 
 /// Multipart form: `file` (MP3 or Ogg Vorbis / Opus), optional `startTime` (unix ms, default now),
@@ -244,6 +279,9 @@ let api =
             route "/sync-status" (simpleJson getSyncStatus)
             |> jsonOut<SyncStatusDto> "getSyncStatus"
 
+            routef "/%s/transcript" (simpleJsonWith getTranscript)
+            |> jsonOut<TranscriptSegmentDto[]> "getTranscript"
+
             // Binary, not part of the generated client - the web app proxies it (app/api/recordings/[id]/audio).
             routef "/%s/audio" getAudio
         ]
@@ -259,6 +297,9 @@ let api =
 
             route "/delete" (simpleJson deleteRecording)
             |> jsonInOut<DeleteRecordingRequest, SuccessResponse> "deleteRecording"
+
+            route "/delete-processed" (simpleJson deleteProcessed)
+            |> jsonOut<DeleteProcessedResponse> "deleteProcessed"
 
             route "/sync" (simpleJson syncNow)
             |> jsonOut<SuccessResponse> "syncNow"

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WorkflowDto, RecordingDto, SyncStatusDto } from "@/lib/generated/api-client";
-import { getWorkflows, getRecordings, getSyncStatus, syncNow } from "./actions";
+import { deleteProcessed, getWorkflows, getRecordings, getSyncStatus, syncNow } from "./actions";
 import { RecordingCard } from "./recordingCard";
 import { SyncAlerts, SyncControls } from "./syncStatusBar";
 import { acceptAttribute, isAcceptedAudio } from "./upload";
@@ -24,6 +24,7 @@ export function RecordingsContent() {
     const [workflows, setWorkflows] = useState<WorkflowDto[]>([]);
     const [syncStatus, setSyncStatus] = useState<SyncStatusDto | null>(null);
     const [syncing, setSyncing] = useState(false);
+    const [deletingProcessed, setDeletingProcessed] = useState(false);
     const [error, setError] = useState<string | null>(null);
     // null = show every group; clicking a tile shows only that one, clicking it again resets.
     const [filter, setFilter] = useState<RecordingGroup | null>(null);
@@ -112,6 +113,22 @@ export function RecordingsContent() {
         } catch {
             setError("Could not start the sync.");
             setSyncing(false);
+        }
+    };
+
+    const handleDeleteProcessed = async () => {
+        const n = count("processed");
+        if (!window.confirm(`Delete all ${n} processed recording${n === 1 ? "" : "s"} from Loopback?
+
+Plaud recordings stay in Plaud (Loopback ignores them from now on), uploaded audio is removed for good. Result files in the output folder are kept.`)) return;
+        setDeletingProcessed(true);
+        try {
+            await deleteProcessed();
+            await refresh();
+        } catch {
+            setError("Could not delete the processed recordings.");
+        } finally {
+            setDeletingProcessed(false);
         }
     };
 
@@ -222,6 +239,17 @@ export function RecordingsContent() {
                                 </span>
                                 {title}
                                 <span className="rounded-full bg-base-content/8 px-2 py-0.5 text-xs font-medium normal-case tracking-normal">{items.length}</span>
+                                {group === "processed" && (
+                                    <button
+                                        className="btn btn-ghost btn-xs ml-auto rounded-lg font-medium normal-case tracking-normal text-base-content/60 hover:text-error"
+                                        onClick={handleDeleteProcessed}
+                                        disabled={deletingProcessed}
+                                        title="Delete every processed recording from Loopback"
+                                    >
+                                        {deletingProcessed ? <span className="loading loading-spinner loading-xs"></span> : <i className="fa-regular fa-trash-can"></i>}
+                                        Delete all
+                                    </button>
+                                )}
                             </h2>
                             {items.map((r) => (
                                 <RecordingCard key={r.id} recording={r} workflows={workflows} onChanged={refresh} onError={setError} />

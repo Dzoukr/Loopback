@@ -26,6 +26,8 @@ Loopback is a locally-running service (via Docker, plus a host-side `claude` bri
 ## Processing
 - Each recording has a status: `synced → queued → transcribing → summarizing → done | failed`.
 - **Delete** (every recording, trash icon, with confirmation): hides it in Loopback. Plaud has no known delete API, so the row becomes a `deleted` tombstone - the sync skips it, stored transcript and result are cleared, the result file in the output folder is kept - and is removed for good once the file is deleted in Plaud too. A running Speechmatics job is deleted; a background step already in progress re-checks the status before writing and drops its work.
+- **Transcript** (every recording with a stored transcript - from `summarizing` on, incl. failed / done): a collapsible panel showing the raw speaker segments, colored per speaker with start-end times. Loaded on first open from `GET /api/recordings/{id}/transcript`.
+- **Delete all processed** (button in the Processed section header, with confirmation): deletes every `done` recording as Delete does one (`POST /api/recordings/delete-processed`). A recording being reprocessed is not `done` and is kept.
 - **Reprocess** (processed recordings with a stored transcript): runs the selected workflow again - summary passes, merge, title - on the stored transcript, without transcribing (no Speechmatics cost). Overwrites the result file and the stored result.
 - A failed recording shows the error and can be retried from the failed step.
 - Clicking "Process" only sets the status to `queued` (with the selected workflow); all work is done by background jobs (see below).

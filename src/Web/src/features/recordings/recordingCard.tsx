@@ -5,6 +5,7 @@ import type { WorkflowDto, RecordingDto } from "@/lib/generated/api-client";
 import { deleteRecording, processRecording, reprocessRecording, retryRecording } from "./actions";
 import { AudioPlayer } from "./audioPlayer";
 import { ResultView } from "./resultView";
+import { TranscriptView } from "./transcriptView";
 import { formatDateTime, formatDuration } from "./utils";
 
 const steps = ["queued", "transcribing", "summarizing", "done"];
@@ -39,6 +40,7 @@ export function RecordingCard({ recording, workflows, onChanged, onError }: Prop
     // Workflows load after the first render, so fall back to the first one until the user picks.
     const workflow = chosenWorkflow ?? workflows[0]?.name ?? "";
     const [busy, setBusy] = useState(false);
+    const [transcriptOpened, setTranscriptOpened] = useState(false);
 
     const run = async (action: () => Promise<void>, failure: string) => {
         setBusy(true);
@@ -154,6 +156,21 @@ ${consequence}`)) return;
                         </summary>
                         <div className="collapse-content text-sm">
                             <ResultView result={recording.result} />
+                        </div>
+                    </details>
+                )}
+
+                {recording.hasTranscript && (
+                    <details
+                        className="collapse collapse-arrow rounded-xl border border-base-content/8 bg-base-200/40"
+                        onToggle={(e) => { if (e.currentTarget.open) setTranscriptOpened(true); }}
+                    >
+                        <summary className="collapse-title min-h-0 py-3 text-sm font-semibold">
+                            <i className="fa-solid fa-comments mr-2 text-info"></i>Transcript
+                        </summary>
+                        <div className="collapse-content text-sm">
+                            {/* Loaded on first open only - a long recording has hundreds of segments. */}
+                            {transcriptOpened && <TranscriptView recordingId={recording.id} onError={onError} />}
                         </div>
                     </details>
                 )}

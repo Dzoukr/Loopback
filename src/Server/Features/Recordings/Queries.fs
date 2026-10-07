@@ -1,6 +1,9 @@
 module Loopback.Server.Features.Recordings.Queries
 
 open System
+open System.Text.Json
+open Loopback.Server
+open Loopback.Server.Integrations.Speechmatics
 open Loopback.Server.Features.Recordings.Domain
 open Loopback.Server.Features.Recordings.Database
 open Loopback.Server.Features.Recordings.Sync.PlaudSession
@@ -26,6 +29,7 @@ let private toRecording (r: RecordingRow) : Queries.Recording =
         Peaks = r.Peaks |> Option.map (fun p -> System.Text.Json.JsonSerializer.Deserialize<float[]> p)
         Result = r.Result
         CanReprocess = r.Status = RecordingStatus.toKey Done && r.Transcript.IsSome
+        HasTranscript = r.Transcript.IsSome
     }
 
 /// SQLite-backed implementation of RecordingsQueries
@@ -68,4 +72,15 @@ type StorageQueries(recordings: RecordingsRepository, workflows: WorkflowCatalog
                     let! path = audio.Ensure(r.Id, RecordingSource.fromKey r.Source)
                     return Some path
                 | _ -> return None
+            }
+
+        member _.GetTranscript(recordingId: string) =
+            task {
+                let! row = recordings.TryGet recordingId
+                return
+                    match row |> Option.bind (fun r -> r.Transcript) with
+                    | Some t ->
+                        JsonSerializer.Deserialize<Segment list>(t, Serialization.options)
+                        |> List.map (fun s -> ({ Speaker = s.Speaker; Start = s.Start; End = s.End; Text = s.Text } : Domain.Queries.TranscriptSegment))
+                    | None -> []
             }
