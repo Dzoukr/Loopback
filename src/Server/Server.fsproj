@@ -23,13 +23,18 @@
     <Compile Include="Features\Recordings\Sync\PlaudSession.fs" />
     <Compile Include="Features\Recordings\Sync\SyncTrigger.fs" />
     <Compile Include="Features\Recordings\Audio\AudioStore.fs" />
+    <Compile Include="Features\Recordings\Attachments\FileKind.fs" />
+    <Compile Include="Features\Recordings\Attachments\CaptureTime.fs" />
+    <Compile Include="Features\Recordings\Attachments\AttachmentStore.fs" />
     <Compile Include="Features\Recordings\Processing\Workflows.fs" />
     <Compile Include="Features\Recordings\Queries.fs" />
     <Compile Include="Features\Recordings\CommandHandler.fs" />
     <Compile Include="Features\Recordings\Sync\SyncBackgroundService.fs" />
+    <Compile Include="Features\Recordings\Processing\Moments.fs" />
     <Compile Include="Features\Recordings\Processing\Pipeline.fs" />
     <Compile Include="Features\Recordings\Processing\ProcessingBackgroundService.fs" />
     <Compile Include="Features\Recordings\Audio\AudioBackgroundService.fs" />
+    <Compile Include="Features\Recordings\Marks\PlaudMarksBackgroundService.fs" />
     <Compile Include="Features\Recordings\API.fs" />
     <Compile Include="WebApp.fs" />
     <Compile Include="Program.fs" />
@@ -48,5 +53,6 @@
     <PackageReference Include="NLayer" />
     <PackageReference Include="NVorbis" />
     <PackageReference Include="BouncyCastle.Cryptography" />
+    <PackageReference Include="MetadataExtractor" />
   </ItemGroup>
 </Project>

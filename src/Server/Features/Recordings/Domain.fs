@@ -57,8 +57,143 @@ module RecordingSource =
         | "upload" -> Upload
         | other -> failwith $"Unknown recording source '{other}'"
 
+/// How an attachment is previewed, detected from the file's first bytes (docs/attachments.md).
+type AttachmentKind =
+    | Image
+    | Pdf
+    | Text
+    | Other
+
+module AttachmentKind =
+    let toKey =
+        function
+        | Image -> "image"
+        | Pdf -> "pdf"
+        | Text -> "text"
+        | Other -> "other"
+
+    let fromKey =
+        function
+        | "image" -> Image
+        | "pdf" -> Pdf
+        | "text" -> Text
+        | "other" -> Other
+        | other -> failwith $"Unknown attachment kind '{other}'"
+
+/// Where an attachment's capture time comes from: reported by Plaud (imported marks), else first match
+/// of file name, EXIF, the file's last-modified time; manual = set by the user, none = unknown.
+type TimeSource =
+    | FromPlaud
+    | FromFileName
+    | FromExif
+    | FromModified
+    | Manual
+    | NoTime
+
+module TimeSource =
+    let toKey =
+        function
+        | FromPlaud -> "plaud"
+        | FromFileName -> "filename"
+        | FromExif -> "exif"
+        | FromModified -> "modified"
+        | Manual -> "manual"
+        | NoTime -> "none"
+
+    let fromKey =
+        function
+        | "plaud" -> FromPlaud
+        | "filename" -> FromFileName
+        | "exif" -> FromExif
+        | "modified" -> FromModified
+        | "manual" -> Manual
+        | "none" -> NoTime
+        | other -> failwith $"Unknown time source '{other}'"
+
+/// Where an attachment or mark comes from: dropped / pasted in Loopback, or imported from a Plaud mark.
+type ItemSource =
+    | Uploaded
+    | FromPlaudMark
+
+module ItemSource =
+    let toKey =
+        function
+        | Uploaded -> "upload"
+        | FromPlaudMark -> "plaud"
+
+    let fromKey =
+        function
+        | "upload" -> Uploaded
+        | "plaud" -> FromPlaudMark
+        | other -> failwith $"Unknown item source '{other}'"
+
+/// What a mark is: a device button press, a note typed in the Plaud app, or a spoken voice memo.
+type MarkKind =
+    | HighlightMark
+    | NoteMark
+    | VoiceMark
+
+module MarkKind =
+    let toKey =
+        function
+        | HighlightMark -> "highlight"
+        | NoteMark -> "note"
+        | VoiceMark -> "voice"
+
+    let fromKey =
+        function
+        | "highlight" -> HighlightMark
+        | "note" -> NoteMark
+        | "voice" -> VoiceMark
+        | other -> failwith $"Unknown mark kind '{other}'"
+
+/// Derived from the capture time and the recording's start + duration, never stored.
+type Placement =
+    /// Captured during the recording, seconds from its start.
+    | DuringCall of offsetSeconds: float
+    /// Outside the recording or unknown - belongs to the call as a whole.
+    | Reference
+
 /// Query Models - Read-side representations
 module Queries =
+    type Attachment = {
+        Id : string
+        RecordingId : string
+        FileName : string
+        ContentType : string
+        Kind : AttachmentKind
+        SizeBytes : int64
+        CapturedAt : DateTimeOffset option
+        TimeSource : TimeSource
+        Note : string option
+        Source : ItemSource
+        /// Machine-made text: Plaud's photo description, a voice memo's transcript.
+        Description : string option
+        Placement : Placement
+        CreatedAt : DateTimeOffset
+    }
+
+    /// A moment in the call without a file (a Plaud highlight, text note or voice memo).
+    type Mark = {
+        Id : string
+        RecordingId : string
+        Kind : MarkKind
+        /// Seconds from the recording start (clamped to the recording).
+        OffsetSeconds : float
+        Note : string option
+        Source : ItemSource
+        /// Plaud is still analyzing it - the note comes later.
+        Pending : bool
+    }
+
+    /// The stored file of an attachment, for serving it.
+    type AttachmentFile = {
+        Path : string
+        FileName : string
+        ContentType : string
+        Kind : AttachmentKind
+    }
+
     type Recording = {
         Id : string
         Filename : string
@@ -80,6 +215,12 @@ module Queries =
         CanReprocess : bool
         /// The transcript is stored (transcription finished), viewable via GetTranscript.
         HasTranscript : bool
+        /// Ordered: during-call by offset, then reference by file name.
+        Attachments : Attachment list
+        /// Done, and attachments were added / changed / deleted after the result was produced.
+        AttachmentsOutdated : bool
+        /// By offset.
+        Marks : Mark list
     }
 
     /// One speaker turn of the stored transcript.
@@ -113,6 +254,8 @@ type RecordingsQueries =
     abstract member GetAudioFile : string -> Task<string option>
     /// Speaker segments of the stored transcript; empty for an unknown recording or one not transcribed yet.
     abstract member GetTranscript : string -> Task<Queries.TranscriptSegment list>
+    /// The stored file of an attachment (recording id, attachment id); None if unknown or the recording is deleted.
+    abstract member GetAttachmentFile : recordingId: string * attachmentId: string -> Task<Queries.AttachmentFile option>
 
 /// Command Arguments
 module CommandArgs =
@@ -145,6 +288,54 @@ module CommandArgs =
         Workflow : string option
     }
 
+    type AddAttachment = {
+        RecordingId : string
+        /// Uploaded file; the caller deletes it afterwards.
+        File : string
+        /// Original file name incl. extension.
+        FileName : string
+        /// The file's last-modified time from the browser; None for clipboard pastes (it is the paste time there).
+        FileModifiedAt : DateTimeOffset option
+        Source : ItemSource
+        /// Capture time reported by the source (Plaud), wins over detection.
+        ReportedCapturedAt : DateTimeOffset option
+        /// Machine-made text (Plaud's description, a voice memo's transcript).
+        Description : string option
+    }
+
+    type AttachmentTime =
+        /// Seconds from the recording's start.
+        | AtOffset of float
+        /// The call as a whole.
+        | AsReference
+        /// Drops the manual time and detects it again.
+        | Detected
+
+    type SetAttachmentTime = {
+        AttachmentId : string
+        Time : AttachmentTime
+    }
+
+    type SetAttachmentNote = {
+        AttachmentId : string
+        /// None (or blank) removes the note.
+        Note : string option
+    }
+
+    type DeleteAttachment = {
+        AttachmentId : string
+    }
+
+    type SetMarkNote = {
+        MarkId : string
+        /// None (or blank) removes the note.
+        Note : string option
+    }
+
+    type DeleteMark = {
+        MarkId : string
+    }
+
 /// Command Union Type - All possible write operations
 type Command =
     | ProcessRecording of CommandArgs.ProcessRecording
@@ -155,9 +346,20 @@ type Command =
     /// Deletes every processed (done) recording, as DeleteRecording does one.
     | DeleteProcessed
     | SyncNow
+    | AddAttachment of CommandArgs.AddAttachment
+    | SetAttachmentTime of CommandArgs.SetAttachmentTime
+    | SetAttachmentNote of CommandArgs.SetAttachmentNote
+    | DeleteAttachment of CommandArgs.DeleteAttachment
+    | SetMarkNote of CommandArgs.SetMarkNote
+    | DeleteMark of CommandArgs.DeleteMark
 
 /// Event Arguments
 module EventArgs =
+    type AttachmentAdded = {
+        RecordingId : string
+        AttachmentId : string
+    }
+
     type RecordingQueued = {
         RecordingId : string
         Workflow : string
@@ -181,6 +383,16 @@ type Event =
     | RecordingDeleted of recordingId: string
     | RecordingUploaded of EventArgs.RecordingUploaded
     | SyncRequested
+    | AttachmentAdded of EventArgs.AttachmentAdded
+    /// The same file (SHA-256) is already attached to the recording - nothing was stored.
+    | AttachmentAlreadyExists of EventArgs.AttachmentAdded
+    | AttachmentUpdated of attachmentId: string
+    | AttachmentDeleted of attachmentId: string
+    | MarkUpdated of markId: string
+    | MarkDeleted of markId: string
+
+/// The attachment cannot be added (too large, too many, deleted recording) - the message says why.
+exception AttachmentRejected of string
 
 /// Command Handler Interface - Write operations
 type RecordingsCommandHandler =

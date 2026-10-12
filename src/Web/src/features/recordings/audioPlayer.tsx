@@ -1,17 +1,29 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useImperativeHandle, useRef, useState } from "react";
+import type { Ref } from "react";
 import { formatClock } from "./utils";
-import { Waveform } from "./waveform";
+import { Waveform, type WaveformMarker } from "./waveform";
 
 // Shown until the backend has computed the peaks (a few seconds after sync).
 const flatPeaks = new Array<number>(120).fill(0);
+
+/** Lets the card seek the player (attachment times) and read its position ("Use playback position"). */
+export type PlayerHandle = {
+    /** Moves to `seconds`; starts playback only if it was already playing. */
+    seekTo: (seconds: number) => void;
+    positionSeconds: () => number;
+};
 
 type Props = {
     recordingId: string;
     durationMs: number;
     peaks: number[] | null;
+    /** Pins above the waveform (attachments captured during the call). */
+    markers?: WaveformMarker[];
+    onMarkerClick?: (id: string) => void;
     onError: (message: string) => void;
+    ref?: Ref<PlayerHandle>;
 };
 
 /**
@@ -19,7 +31,7 @@ type Props = {
  * streamed through the BFF route (app/api/recordings/[id]/audio); it is attached on first
  * play only, so the list does not load every recording up front.
  */
-export function AudioPlayer({ recordingId, durationMs, peaks, onError }: Props) {
+export function AudioPlayer({ recordingId, durationMs, peaks, markers, onMarkerClick, onError, ref }: Props) {
     const audioRef = useRef<HTMLAudioElement>(null);
     const pendingSeek = useRef<number | null>(null);
     const [src, setSrc] = useState<string | null>(null);
@@ -53,6 +65,17 @@ export function AudioPlayer({ recordingId, durationMs, peaks, onError }: Props) 
         await audio.play().catch(() => {});
     };
 
+    useImperativeHandle(ref, () => ({
+        seekTo: (seconds: number) => {
+            const ratio = duration > 0 ? Math.min(1, Math.max(0, seconds / duration)) : 0;
+            const audio = audioRef.current;
+            // Not loaded yet: remember the position, the next play starts there.
+            if (audio && src) audio.currentTime = ratio * duration;
+            setProgress(ratio);
+        },
+        positionSeconds: () => progress * duration,
+    }), [duration, src, progress]);
+
     const toggle = () => {
         if (playing) audioRef.current?.pause();
         else playFrom();
@@ -77,6 +100,13 @@ export function AudioPlayer({ recordingId, durationMs, peaks, onError }: Props) 
                     progress={progress}
                     durationSeconds={duration}
                     onSeek={(ratio) => playFrom(ratio)}
+                    markers={markers}
+                    onMarkerClick={(id, ratio) => {
+                        const audio = audioRef.current;
+                        if (audio && src) audio.currentTime = ratio * duration;
+                        setProgress(ratio);
+                        onMarkerClick?.(id);
+                    }}
                     height={44}
                 />
             </div>

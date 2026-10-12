@@ -49,6 +49,9 @@ set "BRIDGE_PORT="
 for /f "usebackq delims=" %%p in (`powershell -NoProfile -Command "try { $u = (Get-Content .env | Where-Object { $_ -match '^\s*CLAUDE_BRIDGE_URL\s*=' } | Select-Object -First 1) -replace '^[^=]*=\s*',''; ([uri]$u.Trim().Trim([char]34)).Port } catch { }"`) do set "BRIDGE_PORT=%%p"
 if not defined BRIDGE_PORT set "BRIDGE_PORT=9100"
 
+REM --- A bridge started before claude-bridge.fsx last changed (an update) is stopped, so it restarts below ---
+powershell -NoProfile -Command "$f = (Get-Item '%ROOT%claude-bridge.fsx').LastWriteTime; $old = Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'dotnet.exe' -and $_.CommandLine -like '*claude-bridge.fsx*' -and $_.CreationDate -lt $f }; if ($old) { $old | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }; 'claude-bridge.fsx was updated - restarting the Claude bridge.'; Start-Sleep -Seconds 2 }"
+
 REM --- Start the bridge unless /health already answers ---
 "%SYS%\curl.exe" -s -m 3 -o nul http://127.0.0.1:%BRIDGE_PORT%/health
 if !errorlevel!==0 (

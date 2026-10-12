@@ -22,9 +22,11 @@
 //   CLAUDE_BIN              claude binary                 (default: `claude` on PATH)
 //
 // Endpoints:
-//   GET  /health  -> { status, claudeVersion, jsonSchema, ... }      (no token)
-//   POST /run     { system, prompt, model, effort, schema?, timeoutSeconds? }
+//   GET  /health  -> { status, claudeVersion, jsonSchema, files, ... } (no token)
+//   POST /run     { system, prompt, model, effort, schema?, timeoutSeconds?, files? }
 //                 -> { result, structuredOutput, usage, costUsd, durationMs }
+//                 files: [{ name, base64 }] - written to the run's own temp folder (its cwd), and claude
+//                 gets the Read tool to open them (e.g. describing attachments). Without files: no tools.
 //                 400 bad input, 401 bad token, 502 claude error, 504 timeout
 // =============================================================================
 
@@ -149,7 +151,9 @@ type RunRequest =
       Model: string
       Effort: string
       Schema: string option
-      TimeoutSeconds: int }
+      TimeoutSeconds: int
+      /// File name -> content, for runs that read files (cwd = a temp folder holding just these).
+      Files: (string * byte[]) list }
 
 let defaultTimeoutSeconds = 300
 let maxTimeoutSeconds = 3600
@@ -161,6 +165,33 @@ let efforts = set [ "low"; "medium"; "high"; "xhigh"; "max" ]
 // System prompt and schema travel as command-line arguments; Windows caps the
 // whole command line at 32767 chars. The prompt itself goes via stdin (no limit).
 let maxArgChars = 30_000
+
+/// Plain file names only - they are written into the run's temp folder.
+let safeFileName = Regex(@"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+
+let parseFiles (root: JsonElement) : Result<(string * byte[]) list, string> =
+    match root.TryGetProperty "files" with
+    | false, _ -> Ok []
+    | true, v when v.ValueKind = JsonValueKind.Null -> Ok []
+    | true, v when v.ValueKind = JsonValueKind.Array ->
+        v.EnumerateArray()
+        |> Seq.fold (fun acc f ->
+            acc |> Result.bind (fun files ->
+                let name =
+                    match f.TryGetProperty "name" with
+                    | true, n when n.ValueKind = JsonValueKind.String -> n.GetString()
+                    | _ -> null
+                let data =
+                    match f.TryGetProperty "base64" with
+                    | true, d when d.ValueKind = JsonValueKind.String -> (try Some(Convert.FromBase64String(d.GetString())) with _ -> None)
+                    | _ -> None
+                match name, data with
+                | null, _ -> Error "every file needs a name"
+                | n, _ when not (safeFileName.IsMatch n) -> Error $"file name '{n}' must be a plain name (letters, digits, . _ -)"
+                | n, _ when files |> List.exists (fst >> (=) n) -> Error $"file name '{n}' is used twice"
+                | _, None -> Error "every file needs base64 content"
+                | n, Some bytes -> Ok(files @ [ n, bytes ]))) (Ok [])
+    | true, _ -> Error "files must be an array of { name, base64 }"
 
 let getStr (e: JsonElement) (name: string) =
     match e.TryGetProperty name with
@@ -200,8 +231,10 @@ let parseRun (body: string) : Result<RunRequest, string> =
                     (try compactJson (v.GetString()) with ex -> Error $"schema is not valid JSON: {ex.Message}")
                     |> Result.map Some
                 | true, _ -> Error "schema must be a JSON object (or a string containing one)"
+            let files = parseFiles root
             match schema with
             | Error e -> Error e
+            | _ when Result.isError files -> Error(match files with Error e -> e | Ok _ -> "")
             | _ when Result.isError timeout -> Error(match timeout with Error e -> e | Ok _ -> "")
             | _ when String.IsNullOrWhiteSpace system -> Error "system is required"
             | _ when String.IsNullOrWhiteSpace prompt -> Error "prompt is required"
@@ -214,7 +247,8 @@ let parseRun (body: string) : Result<RunRequest, string> =
                 Error $"system + schema exceed {maxArgChars} chars (Windows command-line limit); move content into prompt"
             | Ok s ->
                 Ok { System = system; Prompt = prompt; Model = model; Effort = effort; Schema = s
-                     TimeoutSeconds = match timeout with Ok t -> t | Error _ -> defaultTimeoutSeconds }
+                     TimeoutSeconds = match timeout with Ok t -> t | Error _ -> defaultTimeoutSeconds
+                     Files = match files with Ok f -> f | Error _ -> [] }
     with ex ->
         Error $"invalid JSON body: {ex.Message}"
 
@@ -227,18 +261,20 @@ type RunOutcome =
 
 let truncate (s: string) = if s.Length > 500 then s.Substring(0, 500) + "..." else s
 
-let runClaude (r: RunRequest) : Task<RunOutcome> =
+let runClaudeIn (r: RunRequest) (runDir: string option) : Task<RunOutcome> =
     task {
         let psi =
             ProcessStartInfo(cfg.ClaudeBin, UseShellExecute = false, CreateNoWindow = true,
                              RedirectStandardInput = true, RedirectStandardOutput = true,
-                             RedirectStandardError = true, WorkingDirectory = cfg.WorkDir,
+                             RedirectStandardError = true, WorkingDirectory = defaultArg runDir cfg.WorkDir,
                              StandardInputEncoding = utf8, StandardOutputEncoding = utf8,
                              StandardErrorEncoding = utf8)
         [ "-p"
           "--output-format"; "json"
           "--exclude-dynamic-system-prompt-sections"
-          "--tools"; "" // no tools: cheaper, and nothing can hang on a permission prompt
+          // No tools (cheaper, nothing can hang on a permission prompt) - only Read when the run has
+          // files, and pre-approved, since -p cannot ask. Read stays inside the cwd (the run's folder).
+          "--tools"; (if runDir.IsSome then "Read" else "")
           // Keep the host's MCP servers (incl. claude.ai connectors) and skills out of
           // the context: with them a one-line call loaded ~110k tokens ($0.22 on haiku),
           // without them ~800 tokens ($0.001).
@@ -249,6 +285,9 @@ let runClaude (r: RunRequest) : Task<RunOutcome> =
           "--model"; r.Model
           "--effort"; r.Effort ] // always explicit: ~/.claude/settings.json never leaks in
         |> List.iter psi.ArgumentList.Add
+        if runDir.IsSome then
+            psi.ArgumentList.Add "--allowedTools"
+            psi.ArgumentList.Add "Read"
         r.Schema |> Option.iter (fun s -> psi.ArgumentList.Add "--json-schema"; psi.ArgumentList.Add s)
 
         use p = Process.Start psi
@@ -295,6 +334,23 @@ let runClaude (r: RunRequest) : Task<RunOutcome> =
                     return Failed(502, $"claude returned non-JSON output (exit {p.ExitCode}): {truncate out}")
     }
 
+let runClaude (r: RunRequest) : Task<RunOutcome> =
+    task {
+        // A run with files gets its own folder holding just them (cleaned up below); the others share
+        // the neutral, empty work dir.
+        let runDir =
+            if r.Files.IsEmpty then None
+            else
+                let dir = Path.Combine(cfg.WorkDir, $"run-{Guid.NewGuid():N}")
+                Directory.CreateDirectory dir |> ignore
+                for name, bytes in r.Files do File.WriteAllBytes(Path.Combine(dir, name), bytes)
+                Some dir
+        try
+            return! runClaudeIn r runDir
+        finally
+            runDir |> Option.iter (fun d -> try Directory.Delete(d, true) with _ -> ())
+    }
+
 // --------------------------------------------------------------------------- //
 // HTTP
 // --------------------------------------------------------------------------- //
@@ -333,10 +389,13 @@ let health () =
     o["defaultTimeoutSeconds"] <- JsonValue.Create defaultTimeoutSeconds
     o["maxTimeoutSeconds"] <- JsonValue.Create maxTimeoutSeconds
     o["maxConcurrency"] <- JsonValue.Create cfg.MaxConcurrency
+    // POST /run accepts `files` (the backend checks this before describing attachments).
+    o["files"] <- JsonValue.Create true
     o
 
 let gate = new SemaphoreSlim(cfg.MaxConcurrency)
-let maxBodyBytes = 20L * 1024L * 1024L
+// Room for a described attachment (up to 20 MB, base64 +33 %).
+let maxBodyBytes = 40L * 1024L * 1024L
 
 let handleRun (ctx: HttpListenerContext) =
     task {
@@ -376,8 +435,8 @@ let handleRun (ctx: HttpListenerContext) =
                                     | _ -> 0L
                                 sprintf "%d in / %d out" (n "input_tokens") (n "output_tokens")
                             | _ -> "usage n/a"
-                        log "run ok model=%s effort=%s schema=%b prompt=%d chars -> %dms, %s"
-                            r.Model r.Effort r.Schema.IsSome r.Prompt.Length sw.ElapsedMilliseconds tokens
+                        log "run ok model=%s effort=%s schema=%b files=%d prompt=%d chars -> %dms, %s"
+                            r.Model r.Effort r.Schema.IsSome r.Files.Length r.Prompt.Length sw.ElapsedMilliseconds tokens
                         do! send ctx 200 o
                 finally
                     gate.Release() |> ignore

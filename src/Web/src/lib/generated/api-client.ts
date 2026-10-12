@@ -10,6 +10,34 @@
  * ---------------------------------------------------------------
  */
 
+export interface AttachmentDto {
+  id: string;
+  fileName: string;
+  contentType: string;
+  kind: string;
+  /** @format int64 */
+  sizeBytes: number;
+  /** @format date-time */
+  capturedAt: string;
+  timeSource: string;
+  note: string;
+  source: string;
+  description: string;
+  placement: string;
+  /** @format double */
+  offsetSeconds: null | number;
+  /** @format date-time */
+  createdAt: string;
+}
+
+export interface DeleteAttachmentRequest {
+  attachmentId: string;
+}
+
+export interface DeleteMarkRequest {
+  markId: string;
+}
+
 export interface DeleteProcessedResponse {
   /** @format int32 */
   deleted: number;
@@ -17,6 +45,16 @@ export interface DeleteProcessedResponse {
 
 export interface DeleteRecordingRequest {
   recordingId: string;
+}
+
+export interface MarkDto {
+  id: string;
+  kind: string;
+  /** @format double */
+  offsetSeconds: number;
+  note: string;
+  source: string;
+  pending: boolean;
 }
 
 export interface ProcessRecordingRequest {
@@ -44,6 +82,9 @@ export interface RecordingDto {
   result: string;
   canReprocess: boolean;
   hasTranscript: boolean;
+  attachments: null | AttachmentDto[];
+  attachmentsOutdated: boolean;
+  marks: null | MarkDto[];
 }
 
 export interface ReprocessRecordingRequest {
@@ -53,6 +94,23 @@ export interface ReprocessRecordingRequest {
 
 export interface RetryRecordingRequest {
   recordingId: string;
+}
+
+export interface SetAttachmentNoteRequest {
+  attachmentId: string;
+  note: string;
+}
+
+export interface SetAttachmentTimeRequest {
+  attachmentId: string;
+  mode: string;
+  /** @format double */
+  offsetSeconds: number;
+}
+
+export interface SetMarkNoteRequest {
+  markId: string;
+  note: string;
 }
 
 export interface SuccessResponse {
@@ -314,11 +372,11 @@ export class Api<
      *
      * @tags Server
      * @name GetTranscript
-     * @request GET:/api/recordings/{id}/transcript
+     * @request GET:/api/recordings/{s0}/transcript
      */
-    getTranscript: (id: string, params: RequestParams = {}) =>
+    getTranscript: (s0: string, params: RequestParams = {}) =>
       this.request<TranscriptSegmentDto[], any>({
-        path: `/api/recordings/${id}/transcript`,
+        path: `/api/recordings/${s0}/transcript`,
         method: "GET",
         format: "json",
         ...params,
@@ -427,6 +485,100 @@ export class Api<
       this.request<SuccessResponse, any>({
         path: `/api/recordings/sync`,
         method: "POST",
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * No description
+     *
+     * @tags Server
+     * @name SetAttachmentTime
+     * @request POST:/api/recordings/attachments/time
+     */
+    setAttachmentTime: (
+      data: SetAttachmentTimeRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<SuccessResponse, any>({
+        path: `/api/recordings/attachments/time`,
+        method: "POST",
+        body: data,
+        type: "application/json",
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * No description
+     *
+     * @tags Server
+     * @name SetAttachmentNote
+     * @request POST:/api/recordings/attachments/note
+     */
+    setAttachmentNote: (
+      data: SetAttachmentNoteRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<SuccessResponse, any>({
+        path: `/api/recordings/attachments/note`,
+        method: "POST",
+        body: data,
+        type: "application/json",
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * No description
+     *
+     * @tags Server
+     * @name DeleteAttachment
+     * @request POST:/api/recordings/attachments/delete
+     */
+    deleteAttachment: (
+      data: DeleteAttachmentRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<SuccessResponse, any>({
+        path: `/api/recordings/attachments/delete`,
+        method: "POST",
+        body: data,
+        type: "application/json",
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * No description
+     *
+     * @tags Server
+     * @name SetMarkNote
+     * @request POST:/api/recordings/marks/note
+     */
+    setMarkNote: (data: SetMarkNoteRequest, params: RequestParams = {}) =>
+      this.request<SuccessResponse, any>({
+        path: `/api/recordings/marks/note`,
+        method: "POST",
+        body: data,
+        type: "application/json",
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * No description
+     *
+     * @tags Server
+     * @name DeleteMark
+     * @request POST:/api/recordings/marks/delete
+     */
+    deleteMark: (data: DeleteMarkRequest, params: RequestParams = {}) =>
+      this.request<SuccessResponse, any>({
+        path: `/api/recordings/marks/delete`,
+        method: "POST",
+        body: data,
+        type: "application/json",
         format: "json",
         ...params,
       }),

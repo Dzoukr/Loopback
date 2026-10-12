@@ -2,5 +2,7 @@
   "model": "sonnet",
   "effort": "high",
   "passes": 3,
-  "timeoutSeconds": 300
+  "timeoutSeconds": 300,
+  "describeModel": "haiku",
+  "describeEffort": "low"
 }

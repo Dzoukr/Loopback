@@ -2,9 +2,75 @@
   "type": "object",
   "properties": {
     "summary": { "type": "string" },
-    "keyPoints": { "type": "array", "items": { "type": "string" } },
-    "actionItems": { "type": "array", "items": { "type": "string" } }
+    "topics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "spans": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "start": { "type": "string" },
+                "end": { "type": "string" }
+              },
+              "required": ["start", "end"],
+              "additionalProperties": false
+            }
+          },
+          "summary": { "type": "string" },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": { "type": "string" },
+                "markIds": { "type": "array", "items": { "type": "string" } },
+                "attachmentIds": { "type": "array", "items": { "type": "string" } }
+              },
+              "required": ["text", "markIds", "attachmentIds"],
+              "additionalProperties": false
+            }
+          },
+          "decisions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": { "type": "string" },
+                "markIds": { "type": "array", "items": { "type": "string" } },
+                "attachmentIds": { "type": "array", "items": { "type": "string" } }
+              },
+              "required": ["text", "markIds", "attachmentIds"],
+              "additionalProperties": false
+            }
+          },
+          "openQuestions": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["id", "title", "spans", "summary", "points", "decisions", "openQuestions"],
+        "additionalProperties": false
+      }
+    },
+    "actionItems": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "owner": { "type": ["string", "null"] },
+          "text": { "type": "string" },
+          "topicId": { "type": ["string", "null"] },
+          "due": { "type": ["string", "null"] },
+          "markIds": { "type": "array", "items": { "type": "string" } },
+          "attachmentIds": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["owner", "text", "topicId", "due", "markIds", "attachmentIds"],
+        "additionalProperties": false
+      }
+    }
   },
-  "required": ["summary", "keyPoints", "actionItems"],
+  "required": ["summary", "topics", "actionItems"],
   "additionalProperties": false
 }

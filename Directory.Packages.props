@@ -21,6 +21,8 @@
     <PackageVersion Include="NVorbis" Version="0.10.5" />
     <!-- Crypto (Plaud password encryption: ECIES over secp256k1, AES-GCM with a 16-byte nonce) -->
     <PackageVersion Include="BouncyCastle.Cryptography" Version="2.7.0" />
+    <!-- Attachments: EXIF capture time of photos (JPEG / HEIC / PNG / WebP), pure .NET -->
+    <PackageVersion Include="MetadataExtractor" Version="2.8.1" />
     <!-- FSharp -->
     <PackageVersion Include="FSharp.Core" Version="10.0.101" />
   </ItemGroup>

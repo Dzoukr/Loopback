@@ -41,9 +41,25 @@ type ClaudeBridgeClient(http: HttpClient, bridgeUrl: string, token: string) =
             with _ -> return None
         }
 
+    /// Whether the bridge accepts `files` (claude-bridge.fsx from the attachments release on); an older
+    /// bridge would ignore them and claude would describe a file it cannot see.
+    member _.SupportsFiles() =
+        task {
+            try
+                use req = localRequest HttpMethod.Get "/health"
+                use cts = new Threading.CancellationTokenSource(TimeSpan.FromSeconds 5.)
+                use! resp = http.SendAsync(req, cts.Token)
+                let! text = resp.Content.ReadAsStringAsync()
+                match JsonNode.Parse(text)["files"] with
+                | null -> return false
+                | n -> return n.GetValueKind() = JsonValueKind.True
+            with _ -> return false
+        }
+
     /// One claude call; `timeoutSeconds` is enforced by the bridge (it kills claude and answers 504),
-    /// the client waits 60 s longer so the bridge's clear error always arrives first.
-    member _.Run(system: string, prompt: string, model: string, effort: string, timeoutSeconds: int, schema: string option) =
+    /// the client waits 60 s longer so the bridge's clear error always arrives first. `files` (plain name,
+    /// content) are put in the run's folder and claude gets the Read tool to open them.
+    member _.Run(system: string, prompt: string, model: string, effort: string, timeoutSeconds: int, schema: string option, ?files: (string * byte[]) list) =
         task {
             let body = JsonObject()
             body["system"] <- JsonValue.Create system
@@ -52,6 +68,16 @@ type ClaudeBridgeClient(http: HttpClient, bridgeUrl: string, token: string) =
             body["effort"] <- JsonValue.Create effort
             body["timeoutSeconds"] <- JsonValue.Create timeoutSeconds
             schema |> Option.iter (fun s -> body["schema"] <- JsonNode.Parse s)
+            match files with
+            | Some fs when not fs.IsEmpty ->
+                let array = JsonArray()
+                for name, bytes in fs do
+                    let f = JsonObject()
+                    f["name"] <- JsonValue.Create name
+                    f["base64"] <- JsonValue.Create(Convert.ToBase64String bytes)
+                    array.Add f
+                body["files"] <- array
+            | _ -> ()
             use req = localRequest HttpMethod.Post "/run"
             req.Headers.TryAddWithoutValidation("X-Bridge-Token", token) |> ignore
             req.Content <- new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json")

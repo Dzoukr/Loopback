@@ -15,6 +15,7 @@ open Loopback.Server.Features.Recordings.Database
 open Loopback.Server.Features.Recordings.Sync.PlaudSession
 open Loopback.Server.Features.Recordings.Sync.SyncTrigger
 open Loopback.Server.Features.Recordings.Audio.AudioStore
+open Loopback.Server.Features.Recordings.Attachments.AttachmentStore
 
 let private pageSize = 50
 let private maxPages = 20
@@ -25,7 +26,10 @@ type SyncBackgroundService(
     session: PlaudSession,
     plaud: PlaudClient,
     recordings: RecordingsRepository,
+    attachments: AttachmentsRepository,
+    marks: MarksRepository,
     audio: AudioStore,
+    attachmentFiles: AttachmentStore,
     trigger: SyncTrigger,
     cfg: Configuration,
     logger: ILogger<SyncBackgroundService>) =
@@ -63,11 +67,17 @@ type SyncBackgroundService(
                     Result = None
                     Source = RecordingSource.toKey Plaud
                 }
+                do! recordings.SetHasPlaudMarks(f.Id, f.HasMarks)
                 return Some true
             // Also backfills the offset of rows synced before it was stored.
             | Some r when r.DeletedAt.IsNone && (r.VersionMs <> f.VersionMs || r.UtcOffsetMinutes.IsNone) ->
                 do! recordings.Update { r with Filename = f.Filename; StartTime = f.StartTime.ToUnixTimeMilliseconds(); DurationMs = f.DurationMs; Filesize = f.Filesize; VersionMs = f.VersionMs; UtcOffsetMinutes = Some(int64 f.UtcOffsetMinutes) }
+                do! recordings.SetHasPlaudMarks(f.Id, f.HasMarks)
                 return Some false
+            // Rows synced before marks were imported: one pass picks their flag up.
+            | Some r when r.DeletedAt.IsNone && f.HasMarks ->
+                do! recordings.SetHasPlaudMarks(f.Id, true)
+                return None
             | Some _ -> return None
         }
 
@@ -95,7 +105,7 @@ type SyncBackgroundService(
         }
 
     /// Removes local rows of recordings deleted in Plaud (gone from both the main list and the
-    /// trash - a trashed file can still be restored), together with their local audio. Only done,
+    /// trash - a trashed file can still be restored), together with their local audio and attachments. Only done,
     /// synced and deleted rows; result files in output/ are never touched. Any listing failure aborts before anything is deleted.
     let removeDeletedInPlaud () =
         task {
@@ -108,6 +118,9 @@ type SyncBackgroundService(
                         let! deleted = recordings.DeleteIfRemovable r.Id
                         if deleted then
                             audio.Delete r.Id
+                            do! attachments.DeleteByRecording r.Id
+                            do! marks.DeleteByRecording r.Id
+                            attachmentFiles.DeleteAll r.Id
                             logger.LogInformation("Recording {Id} ({Status}) was deleted in Plaud - removed from the database", r.Id, r.Status)
         }
 

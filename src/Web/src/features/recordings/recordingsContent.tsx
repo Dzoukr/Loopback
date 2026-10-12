@@ -34,6 +34,8 @@ export function RecordingsContent() {
     const [uploads, setUploads] = useState<UploadItem[]>([]);
     const [dragging, setDragging] = useState(false);
     const fileInput = useRef<HTMLInputElement>(null);
+    // The card Ctrl+V attaches to: the last one clicked or focused.
+    const [activeId, setActiveId] = useState<string | null>(null);
 
     const refresh = useCallback(async () => {
         try {
@@ -60,7 +62,7 @@ export function RecordingsContent() {
 
     const addFiles = useCallback((files: File[]) => {
         const rejected = files.filter((f) => !isAcceptedAudio(f));
-        if (rejected.length > 0) setError(`Only MP3 and OGG files can be uploaded: ${rejected.map((f) => f.name).join(", ")}`);
+        if (rejected.length > 0) setError(`Only MP3 and OGG files can be uploaded as recordings - drop other files on a recording to attach them: ${rejected.map((f) => f.name).join(", ")}`);
         const accepted = files.filter(isAcceptedAudio);
         if (accepted.length > 0) setUploads((all) => [...all, ...toUploadItems(accepted)]);
     }, []);
@@ -85,21 +87,26 @@ export function RecordingsContent() {
             depth = Math.max(0, depth - 1);
             if (depth === 0) setDragging(false);
         };
+        // Capture phase: also runs for drops on a card, which stops the event before it bubbles to onDrop.
+        const onDropCapture = () => {
+            depth = 0;
+            setDragging(false);
+        };
         const onDrop = (e: DragEvent) => {
             if (!hasFiles(e)) return;
             e.preventDefault();
-            depth = 0;
-            setDragging(false);
             addFiles(Array.from(e.dataTransfer?.files ?? []));
         };
         window.addEventListener("dragenter", onEnter);
         window.addEventListener("dragover", onOver);
         window.addEventListener("dragleave", onLeave);
+        window.addEventListener("drop", onDropCapture, true);
         window.addEventListener("drop", onDrop);
         return () => {
             window.removeEventListener("dragenter", onEnter);
             window.removeEventListener("dragover", onOver);
             window.removeEventListener("dragleave", onLeave);
+            window.removeEventListener("drop", onDropCapture, true);
             window.removeEventListener("drop", onDrop);
         };
     }, [addFiles]);
@@ -252,21 +259,34 @@ Plaud recordings stay in Plaud (Loopback ignores them from now on), uploaded aud
                                 )}
                             </h2>
                             {items.map((r) => (
-                                <RecordingCard key={r.id} recording={r} workflows={workflows} onChanged={refresh} onError={setError} />
+                                <RecordingCard
+                                    key={r.id}
+                                    recording={r}
+                                    workflows={workflows}
+                                    active={activeId === r.id}
+                                    onActivate={() => setActiveId(r.id)}
+                                    dragging={dragging}
+                                    onChanged={refresh}
+                                    onError={setError}
+                                />
                             ))}
                         </section>
                     );
                 })}
             </main>
 
+            {/* The cards stay visible while dragging - they are drop targets for attachments. */}
             {dragging && (
-                <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-base-300/70 p-6 backdrop-blur-sm">
-                    <div className="flex flex-col items-center gap-3 rounded-box border-2 border-dashed border-primary/60 bg-base-100/80 px-12 py-10 text-center">
-                        <div className="flex size-14 items-center justify-center rounded-2xl bg-primary/12 text-2xl text-primary">
-                            <i className="fa-solid fa-file-arrow-up"></i>
-                        </div>
-                        <p className="font-medium">Drop audio files to upload</p>
-                        <p className="text-sm text-base-content/60">MP3 or OGG</p>
+                <div className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-4">
+                    <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 rounded-box border-2 border-dashed border-primary/60 bg-base-100/95 px-6 py-4 text-sm shadow-xl">
+                        <span className="flex items-center gap-2">
+                            <i className="fa-solid fa-file-arrow-up text-primary"></i>
+                            <span><span className="font-medium">Drop anywhere</span> to upload MP3 / OGG as a new recording</span>
+                        </span>
+                        <span className="flex items-center gap-2">
+                            <i className="fa-solid fa-paperclip text-accent"></i>
+                            <span><span className="font-medium">Drop on a recording</span> to attach files to it</span>
+                        </span>
                     </div>
                 </div>
             )}

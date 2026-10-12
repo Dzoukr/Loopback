@@ -9,10 +9,63 @@ open Loopback.Server.Features.Recordings.Database
 open Loopback.Server.Features.Recordings.Sync.PlaudSession
 open Loopback.Server.Features.Recordings.Audio.AudioStore
 open Loopback.Server.Features.Recordings.Processing.Workflows
+open Loopback.Server.Features.Recordings.Attachments
+open Loopback.Server.Features.Recordings.Attachments.AttachmentStore
 
 let private toDate (ms: int64) = DateTimeOffset.FromUnixTimeMilliseconds ms
 
-let private toRecording (r: RecordingRow) : Queries.Recording =
+let private toAttachment (r: RecordingRow) (a: AttachmentRow) : Queries.Attachment =
+    let capturedAt = a.CapturedAt |> Option.map toDate
+    {
+        Id = a.Id
+        RecordingId = a.RecordingId
+        FileName = a.FileName
+        ContentType = a.ContentType
+        Kind = AttachmentKind.fromKey a.Kind
+        SizeBytes = a.SizeBytes
+        CapturedAt = capturedAt
+        TimeSource = TimeSource.fromKey a.TimeSource
+        Note = a.Note
+        Source = ItemSource.fromKey a.Source
+        Description = a.Description
+        Placement = CaptureTime.placement (toDate r.StartTime) (TimeSpan.FromMilliseconds(float r.DurationMs)) capturedAt
+        CreatedAt = toDate a.CreatedAt
+    }
+
+let private toMark (r: RecordingRow) (m: MarkRow) : Queries.Mark =
+    {
+        Id = m.Id
+        RecordingId = m.RecordingId
+        Kind = MarkKind.fromKey m.Kind
+        OffsetSeconds = Math.Clamp(float m.OffsetMs / 1000., 0., max 0. (float r.DurationMs / 1000.))
+        Note = m.Note
+        Source = ItemSource.fromKey m.Source
+        Pending = m.Pending <> 0L
+    }
+
+/// During call by offset, then reference by file name.
+let private ordered (attachments: Queries.Attachment list) =
+    attachments
+    |> List.sortBy (fun a ->
+        match a.Placement with
+        | DuringCall offset -> 0, offset, ""
+        | Reference -> 1, 0., a.FileName.ToLowerInvariant())
+
+/// The result envelope's processedAt (unix ms), None when there is no (parsable) result.
+let private processedAt (result: string option) =
+    result
+    |> Option.bind (fun json ->
+        try
+            use doc = JsonDocument.Parse json
+            match doc.RootElement.TryGetProperty "processedAt" with
+            | true, p when p.ValueKind = JsonValueKind.String ->
+                match DateTimeOffset.TryParse(p.GetString()) with
+                | true, t -> Some(t.ToUnixTimeMilliseconds())
+                | _ -> None
+            | _ -> None
+        with :? JsonException -> None)
+
+let private toRecording (attachments: AttachmentRow list) (marks: MarkRow list) (attachmentsChangedAt: int64 option) (r: RecordingRow) : Queries.Recording =
     {
         Id = r.Id
         Filename = r.Filename
@@ -30,16 +83,33 @@ let private toRecording (r: RecordingRow) : Queries.Recording =
         Result = r.Result
         CanReprocess = r.Status = RecordingStatus.toKey Done && r.Transcript.IsSome
         HasTranscript = r.Transcript.IsSome
+        Attachments = attachments |> List.map (toAttachment r) |> ordered
+        AttachmentsOutdated =
+            r.Status = RecordingStatus.toKey Done
+            && match attachmentsChangedAt, processedAt r.Result with
+               | Some changed, Some processed -> changed > processed
+               | _ -> false
+        Marks = marks |> List.map (toMark r) |> List.sortBy _.OffsetSeconds
     }
 
 /// SQLite-backed implementation of RecordingsQueries
-type StorageQueries(recordings: RecordingsRepository, workflows: WorkflowCatalog, session: PlaudSession, audio: AudioStore) =
+type StorageQueries(recordings: RecordingsRepository, attachments: AttachmentsRepository, marks: MarksRepository, workflows: WorkflowCatalog, session: PlaudSession, audio: AudioStore, attachmentFiles: AttachmentStore) =
 
     interface RecordingsQueries with
         member _.GetRecordings() =
             task {
                 let! rows = recordings.GetAll()
-                return rows |> List.filter (fun r -> r.Status <> RecordingStatus.toKey Deleted) |> List.map toRecording
+                let! all = attachments.GetAll()
+                let! allMarks = marks.GetAll()
+                let! changedAt = recordings.GetAttachmentsChangedAt()
+                let byRecording = all |> List.groupBy (fun a -> a.RecordingId) |> Map.ofList
+                let marksByRecording = allMarks |> List.groupBy (fun m -> m.RecordingId) |> Map.ofList
+                return
+                    rows
+                    |> List.filter (fun r -> r.Status <> RecordingStatus.toKey Deleted)
+                    |> List.map (fun r ->
+                        let of' (m: Map<string, 'T list>) = m.TryFind r.Id |> Option.defaultValue []
+                        toRecording (of' byRecording) (of' marksByRecording) (changedAt.TryFind r.Id) r)
             }
 
         member _.GetWorkflows() =
@@ -83,4 +153,18 @@ type StorageQueries(recordings: RecordingsRepository, workflows: WorkflowCatalog
                         JsonSerializer.Deserialize<Segment list>(t, Serialization.options)
                         |> List.map (fun s -> ({ Speaker = s.Speaker; Start = s.Start; End = s.End; Text = s.Text } : Domain.Queries.TranscriptSegment))
                     | None -> []
+            }
+
+        member _.GetAttachmentFile(recordingId: string, attachmentId: string) =
+            task {
+                let! recording = recordings.TryGet recordingId
+                let! attachment = attachments.TryGet attachmentId
+                match recording, attachment with
+                | Some r, Some a when r.Status <> RecordingStatus.toKey Deleted && a.RecordingId = r.Id ->
+                    let path = attachmentFiles.PathOf(r.Id, a.Id)
+                    return
+                        if IO.File.Exists path then
+                            Some({ Path = path; FileName = a.FileName; ContentType = a.ContentType; Kind = AttachmentKind.fromKey a.Kind } : Domain.Queries.AttachmentFile)
+                        else None
+                | _ -> return None
             }

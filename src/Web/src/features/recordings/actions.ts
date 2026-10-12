@@ -4,7 +4,8 @@ import { createApiClient } from "@/api";
 import type { WorkflowDto, RecordingDto, SyncStatusDto, TranscriptSegmentDto } from "@/lib/generated/api-client";
 
 // Every backend call goes through these server actions (BFF) - components never call the backend.
-// The audio is binary, so it goes through a route handler instead (app/api/recordings/[id]/audio).
+// Binary content goes through route handlers instead: the audio (app/api/recordings/[id]/audio) and
+// attachment files (app/api/recordings/[id]/attachments).
 
 export async function getRecordings(): Promise<RecordingDto[]> {
     const response = await createApiClient().getRecordings();
@@ -53,4 +54,28 @@ export async function deleteRecording(recordingId: string): Promise<void> {
 export async function deleteProcessed(): Promise<number> {
     const response = await createApiClient().deleteProcessed();
     return response.data.deleted;
+}
+
+/** Places the attachment `offsetSeconds` into the recording, at the call as a whole, or back at its detected time. */
+export async function setAttachmentTime(attachmentId: string, mode: "offset" | "reference" | "detected", offsetSeconds = 0): Promise<void> {
+    await createApiClient().setAttachmentTime({ attachmentId, mode, offsetSeconds });
+}
+
+/** Sets the attachment's note; blank removes it. */
+export async function setAttachmentNote(attachmentId: string, note: string): Promise<void> {
+    await createApiClient().setAttachmentNote({ attachmentId, note });
+}
+
+export async function deleteAttachment(attachmentId: string): Promise<void> {
+    await createApiClient().deleteAttachment({ attachmentId });
+}
+
+/** Sets a mark's note; blank removes it. Plaud's late text never overwrites it afterwards. */
+export async function setMarkNote(markId: string, note: string): Promise<void> {
+    await createApiClient().setMarkNote({ markId, note });
+}
+
+/** Deletes a mark; the next sync does not import it again. */
+export async function deleteMark(markId: string): Promise<void> {
+    await createApiClient().deleteMark({ markId });
 }

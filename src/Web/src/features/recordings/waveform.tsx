@@ -4,6 +4,19 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent } from "react";
 import { formatClock } from "./utils";
 
+/** A pin above the waveform: an attachment captured at that moment, or a mark. */
+export type WaveformMarker = {
+    id: string;
+    kind: "attachment" | "mark";
+    /** Font Awesome icon of a single pin (default: paperclip / flag). */
+    icon?: string;
+    /** Position in [0, 1]. */
+    ratio: number;
+    label: string;
+    /** Shown in the pin's tooltip. */
+    thumbnailUrl?: string;
+};
+
 type Props = {
     /** Envelope values in [0, 1], any length (resampled to the available width). */
     peaks: number[];
@@ -12,6 +25,9 @@ type Props = {
     durationSeconds: number;
     /** Called with the requested position in [0, 1]. */
     onSeek: (ratio: number) => void;
+    markers?: WaveformMarker[];
+    /** Clicked pin: its first marker's id and position. */
+    onMarkerClick?: (id: string, ratio: number) => void;
     height?: number;
 };
 
@@ -24,6 +40,20 @@ const KEY_STEP_SECONDS = 5;
 const KEY_STEP_SECONDS_LARGE = 30;
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+
+/** Pins closer than this (share of the width) merge into one with a count. */
+const MARKER_MERGE_RATIO = 0.01;
+
+/** Groups markers sorted by position into pins, merging ones that would overlap. */
+function groupMarkers(markers: WaveformMarker[]): WaveformMarker[][] {
+    const groups: WaveformMarker[][] = [];
+    for (const m of [...markers].sort((a, b) => a.ratio - b.ratio)) {
+        const last = groups[groups.length - 1];
+        if (last && m.ratio - last[0].ratio < MARKER_MERGE_RATIO) last.push(m);
+        else groups.push([m]);
+    }
+    return groups;
+}
 
 /** Downsamples `peaks` to `count` buckets, keeping each bucket's loudest value. */
 function resample(peaks: number[], count: number): number[] {
@@ -56,7 +86,7 @@ function barsPath(values: number[], width: number, height: number): string {
  * rectangle (so a progress tick only moves one attribute). Click or drag to seek, arrow keys
  * step 5 s (Shift: 30 s), hovering shows the time under the pointer.
  */
-export function Waveform({ peaks, progress, durationSeconds, onSeek, height = 56 }: Props) {
+export function Waveform({ peaks, progress, durationSeconds, onSeek, markers, onMarkerClick, height = 56 }: Props) {
     const rootRef = useRef<HTMLDivElement>(null);
     const [width, setWidth] = useState(0);
     const [hover, setHover] = useState<number | null>(null);
@@ -117,6 +147,7 @@ export function Waveform({ peaks, progress, durationSeconds, onSeek, height = 56
     };
 
     const playedX = position * width;
+    const pins = useMemo(() => groupMarkers(markers ?? []), [markers]);
 
     return (
         <div
@@ -160,6 +191,37 @@ export function Waveform({ peaks, progress, durationSeconds, onSeek, height = 56
                     )}
                 </svg>
             )}
+
+            {pins.map((group) => {
+                const first = group[0];
+                const title = group.map((m) => m.label).join("\n");
+                // A pin with only marks is a flag, anything with an attachment a paperclip.
+                const onlyMarks = group.every((m) => m.kind === "mark");
+                return (
+                    <button
+                        key={first.id}
+                        type="button"
+                        className="group/pin absolute -top-2 z-10 -translate-x-1/2 cursor-pointer"
+                        style={{ left: `${clamp01(first.ratio) * 100}%` }}
+                        // Not a seek on the waveform underneath.
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => { e.stopPropagation(); onMarkerClick?.(first.id, first.ratio); }}
+                        aria-label={`${onlyMarks ? "Mark" : "Attachment"}: ${title}`}
+                    >
+                        <span className={`flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-semibold shadow ring-2 ring-base-100 ${
+                            onlyMarks ? "bg-warning text-warning-content" : "bg-accent text-accent-content"}`}>
+                            {group.length > 1 ? group.length : <i className={`fa-solid ${first.icon ?? (onlyMarks ? "fa-flag" : "fa-paperclip")}`}></i>}
+                        </span>
+                        <span className="pointer-events-none absolute bottom-6 left-1/2 hidden w-max max-w-56 -translate-x-1/2 flex-col gap-1 rounded-lg bg-base-100 p-1.5 text-left text-[11px] shadow-lg ring-1 ring-base-content/10 group-hover/pin:flex group-focus-visible/pin:flex">
+                            {first.thumbnailUrl && (
+                                // eslint-disable-next-line @next/next/no-img-element -- served by the BFF route
+                                <img src={first.thumbnailUrl} alt="" loading="lazy" className="max-h-28 max-w-52 rounded object-contain" />
+                            )}
+                            {group.map((m) => <span key={m.id} className="truncate">{m.label}</span>)}
+                        </span>
+                    </button>
+                );
+            })}
 
             {hover !== null && duration > 0 && (
                 <span

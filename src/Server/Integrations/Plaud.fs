@@ -155,7 +155,90 @@ type PlaudFile = {
     VersionMs : string
     /// Local UTC offset of the recording (Plaud `timezone` hours + `zonemins`).
     UtcOffsetMinutes : int
+    /// `is_markmemo`: the recording has marks made during the call (see GetMarks).
+    HasMarks : bool
 }
+
+/// `mark_type` of a Plaud mark (docs/attachments.md, Plaud Marks).
+type PlaudMarkKind =
+    /// Plaud app voice memo - an Ogg file (transcribed, not kept), `Content` is Plaud's transcript of it.
+    | VoiceMemo
+    /// Plaud app photo - an image file, `Content` is Plaud's AI description.
+    | Photo
+    /// Plaud app text note - `Content` is the user's text.
+    | TextNote
+    /// Device button press - `Content` is Plaud's AI summary of the moment, filled in later.
+    | Highlight
+    | UnknownMark of int
+
+type PlaudMark = {
+    /// `mark_id`, or type:timestamp:hash(content) for marks without one.
+    Key : string
+    Kind : PlaudMarkKind
+    /// From the recording start.
+    OffsetMs : int64
+    /// Plaud's text; None while it is still analyzing (or empty).
+    Content : string option
+    /// Plaud is still analyzing it (`mark_status` other than 3) - the text comes later.
+    Pending : bool
+    /// Deleted by the user in Plaud (`is_user_deleted`).
+    Deleted : bool
+    /// Storage path of the file (`picture_link`), e.g. permanent/.../mark/20261009_114810_095861eb.png.
+    FilePath : string option
+    /// Presigned download URL of the file (valid ~15 minutes).
+    FileUrl : string option
+}
+
+/// Marks of a recording from its `/file/detail` answer: the `mark_memo` content item, inline in
+/// `pre_download_content_list` (or None when only its `data_link` has it), and the file URLs.
+/// Handles both the Plaud app's format and the device's (with `mark_status`, `is_user_deleted`, ...).
+let parseMarks (detail: JsonNode) (content: string option) : PlaudMark list =
+    let d = get detail [ "data" ]
+    let urls =
+        match get d [ "download_path_mapping" ] with
+        | :? JsonObject as o -> o |> Seq.map (fun kv -> kv.Key, str kv.Value) |> Map.ofSeq
+        | _ -> Map.empty
+    let marks =
+        match content with
+        | Some json -> (try JsonNode.Parse json with _ -> null)
+        | None -> null
+    items marks
+    |> List.map (fun m ->
+        let typeNumber = int (int64' (get m [ "mark_type" ]))
+        let kind =
+            match typeNumber with
+            | 1 -> VoiceMemo
+            | 2 -> Photo
+            | 3 -> TextNote
+            | 4 -> Highlight
+            | n -> UnknownMark n
+        let offset = int64' (get m [ "timestamp" ])
+        // The app's format has no mark_status - its marks are complete.
+        let pending =
+            match get m [ "mark_status" ] with
+            | null -> false
+            | status -> int64' status <> 3L
+        let text = (str (get m [ "mark_content" ])).Trim()
+        let filePath = match str (get m [ "picture_link" ]) with "" -> None | p -> Some p
+        let key =
+            match str (get m [ "mark_id" ]) with
+            | "" ->
+                let hash = Convert.ToHexStringLower(Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes text)).Substring(0, 12)
+                $"{typeNumber}:{offset}:{hash}"
+            | id -> id
+        {
+            Key = key
+            Kind = kind
+            OffsetMs = offset
+            Content = if pending || text = "" then None else Some text
+            Pending = pending
+            Deleted = str (get m [ "is_user_deleted" ]) = "true"
+            FilePath = filePath
+            FileUrl =
+                filePath
+                |> Option.bind (fun p -> urls.TryFind p)
+                |> Option.orElse (match str (get m [ "picture_full_url" ]) with "" -> None | u -> Some u)
+        })
 
 /// Login / user-token refresh answer: tokens at the top level or under `data`, expiries as
 /// unix seconds (`*_expire_at`) or seconds from now (`*_expires_in`), the refresh token in
@@ -359,6 +442,7 @@ type PlaudClient(http: HttpClient) =
                             UtcOffsetMinutes =
                                 let hours, minutes = int (int64' (get f [ "timezone" ])), int (int64' (get f [ "zonemins" ]))
                                 hours * 60 + (if hours < 0 then -(abs minutes) else minutes)
+                            HasMarks = str (get f [ "is_markmemo" ]) = "true"
                         })
         }
 
@@ -378,6 +462,54 @@ type PlaudClient(http: HttpClient) =
                 if go && page >= maxPages then
                     raise (PlaudError $"more than {pageSize * maxPages} recordings - listing stopped")
             return Set.ofSeq ids
+        }
+
+    /// Marks made during the call (docs/attachments.md, Plaud Marks); empty when the recording has none
+    /// or Plaud has not prepared them yet (`task_status` other than 1).
+    member _.GetMarks(apiBase: string, workspaceToken: string, fileId: string) =
+        task {
+            let! r = call apiBase workspaceToken HttpMethod.Get $"/file/detail/{Uri.EscapeDataString fileId}" None
+            let d = get r [ "data" ]
+            let item =
+                items (get d [ "content_list" ])
+                |> List.tryFind (fun i -> str (get i [ "data_type" ]) = "mark_memo" && str (get i [ "task_status" ]) = "1")
+            match item with
+            | None -> return []
+            | Some i ->
+                let dataId = str (get i [ "data_id" ])
+                let inline' =
+                    items (get d [ "pre_download_content_list" ])
+                    |> List.tryFind (fun p -> str (get p [ "data_id" ]) = dataId)
+                    |> Option.map (fun p -> str (get p [ "data_content" ]))
+                    |> Option.filter ((<>) "")
+                let! content =
+                    match inline', str (get i [ "data_link" ]) with
+                    | Some c, _ -> Threading.Tasks.Task.FromResult(Some c)
+                    | None, "" -> Threading.Tasks.Task.FromResult None
+                    | None, link ->
+                        task {
+                            // Presigned, no auth; may be gzip.
+                            let! bytes = http.GetByteArrayAsync link
+                            let bytes =
+                                if bytes.Length > 2 && bytes[0] = 0x1Fuy && bytes[1] = 0x8Buy then
+                                    use input = new IO.Compression.GZipStream(new IO.MemoryStream(bytes), IO.Compression.CompressionMode.Decompress)
+                                    use output = new IO.MemoryStream()
+                                    input.CopyTo output
+                                    output.ToArray()
+                                else bytes
+                            return Some(Encoding.UTF8.GetString bytes)
+                        }
+                return parseMarks r content
+        }
+
+    /// Downloads a mark's file from its presigned URL (no auth) to `path`.
+    member _.DownloadMarkFile(url: string, path: string) =
+        task {
+            use! resp = http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead)
+            if not resp.IsSuccessStatusCode then
+                raise (PlaudError $"mark file download -> HTTP {int resp.StatusCode}")
+            use file = IO.File.Create path
+            do! resp.Content.CopyToAsync file
         }
 
     /// Presigned S3 URL of the audio (Ogg/Opus), valid ~60 minutes, supports HTTP Range.

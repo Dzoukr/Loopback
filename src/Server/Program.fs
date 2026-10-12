@@ -34,6 +34,8 @@ let private configureDatabase (cfg: Configuration) (builder: WebApplicationBuild
     builder.Services.AddSingleton<DbConnectionFactory>(factory) |> ignore
     builder.Services.AddSingleton<Database.RecordingsRepository>() |> ignore
     builder.Services.AddSingleton<Database.PlaudConnectionRepository>() |> ignore
+    builder.Services.AddSingleton<Database.AttachmentsRepository>() |> ignore
+    builder.Services.AddSingleton<Database.MarksRepository>() |> ignore
     builder
 
 let private configureServices (cfg: Configuration) (builder: WebApplicationBuilder) =
@@ -54,6 +56,7 @@ let private configureServices (cfg: Configuration) (builder: WebApplicationBuild
     builder.Services.AddSingleton<Sync.PlaudSession.PlaudSession>() |> ignore
     builder.Services.AddSingleton<Sync.SyncTrigger.SyncTrigger>() |> ignore
     builder.Services.AddSingleton<Audio.AudioStore.AudioStore>() |> ignore
+    builder.Services.AddSingleton<Attachments.AttachmentStore.AttachmentStore>() |> ignore
     builder.Services.AddSingleton<Processing.Workflows.WorkflowCatalog>(fun sp ->
         Processing.Workflows.WorkflowCatalog(cfg.Paths.Workflows, sp.GetRequiredService<ILogger<Processing.Workflows.WorkflowCatalog>>())) |> ignore
     builder.Services.AddSingleton<Processing.Pipeline.Pipeline>() |> ignore
@@ -62,6 +65,7 @@ let private configureServices (cfg: Configuration) (builder: WebApplicationBuild
     builder.Services.AddHostedService<Sync.SyncBackgroundService.SyncBackgroundService>() |> ignore
     builder.Services.AddHostedService<Processing.ProcessingBackgroundService.ProcessingBackgroundService>() |> ignore
     builder.Services.AddHostedService<Audio.AudioBackgroundService.AudioBackgroundService>() |> ignore
+    builder.Services.AddHostedService<Marks.PlaudMarksBackgroundService.PlaudMarksBackgroundService>() |> ignore
     builder
 
 let private configureWeb (builder: WebApplicationBuilder) =
@@ -77,9 +81,23 @@ let private configureWeb (builder: WebApplicationBuilder) =
         ) |> ignore
     builder
 
+/// Attachment / mark rows whose recording is gone, then files without a row (e.g. a crash between storing
+/// the file and inserting its row) - see docs/attachments.md, Lifecycle.
+let private removeOrphanAttachments (services: IServiceProvider) (logger: ILogger) =
+    let rows = services.GetRequiredService<Database.AttachmentsRepository>()
+    let files = services.GetRequiredService<Attachments.AttachmentStore.AttachmentStore>()
+    let orphanRows =
+        rows.DeleteOrphans().GetAwaiter().GetResult()
+        + services.GetRequiredService<Database.MarksRepository>().DeleteOrphans().GetAwaiter().GetResult()
+    let known = rows.GetAll().GetAwaiter().GetResult() |> List.map (fun a -> a.RecordingId, a.Id) |> Set.ofList
+    let orphanFiles = files.DeleteOrphans known
+    if orphanRows > 0 || orphanFiles > 0 then
+        logger.LogInformation("Removed {Rows} orphan attachment / mark rows and {Files} orphan attachment files", orphanRows, orphanFiles)
+
 let private configureApp (cfg: Configuration) (app: WebApplication) =
     let logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Loopback")
     migrate (app.Services.GetRequiredService<DbConnectionFactory>()) logger
+    removeOrphanAttachments app.Services logger
     logger.LogInformation("Workflows {Workflows}, data {Data}, output {Output}", cfg.Paths.Workflows, cfg.Paths.Data, cfg.Paths.Output)
     if String.IsNullOrWhiteSpace cfg.Plaud.Email || String.IsNullOrWhiteSpace cfg.Plaud.Password || String.IsNullOrWhiteSpace cfg.Speechmatics.ApiKey || String.IsNullOrWhiteSpace cfg.Claude.Token then
         logger.LogWarning("PLAUD_EMAIL, PLAUD_PASSWORD, SPEECHMATICS_API_KEY and CLAUDE_BRIDGE_TOKEN must all be set (see .env.example)")
