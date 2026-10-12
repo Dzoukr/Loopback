@@ -1,12 +1,15 @@
 # Attachments - Part 2: Processing and Export
 
-Part 1 (`docs/attachments.md`) puts files and marks into a recording. Part 2 makes the AI read them next to what was said at that moment, links them from the result, and exports them with the result JSON - so the meeting note in Obsidian holds what was on screen and every moment the user marked.
+Part 1 (`docs/attachments.md`) puts files and marks into a recording. Part 2 makes the AI read them next to what was said at that moment, assigns each to a topic of the result, and exports them with the result JSON - so the meeting note in Obsidian holds what was on screen and every moment the user marked.
 
-Status: implemented. The Obsidian note (meeting-notes skill) lives outside this repo and is not changed yet.
+In the result and the note, marks are called **notes** ("Attachments & Notes"); in the JSON they stay `marks`.
+
+Status: implemented, including the meeting-notes skill (outside this repo). Restructured on 2026-10-12: a short result in reading order instead of topics with linked points (that layout was too complex to read).
 
 ## Goals
 - The summary passes see attachments and marks **in the transcript, at their moment** - "look at this number here" next to the screenshot that shows it.
-- Every mark the user made reaches the result and the Obsidian note, whether or not the AI linked it to a point (a pressed button means the moment mattered).
+- Every mark the user made reaches the result and the Obsidian note (a pressed button means the moment mattered), with the topic it belongs to.
+- The note reads in order of importance and stays short: summary, key points per topic, decisions, open questions, action items, then attachments and notes.
 - The result JSON stays self-contained: files next to it, ids that resolve inside the file.
 
 ## Processing
@@ -34,7 +37,7 @@ Status: implemented. The Obsidian note (meeting-notes skill) lives outside this 
   - Attachments: kind, file name, the user's note (if any), then the description.
 - Reference attachments (outside the call) are listed before the transcript under `Shared around the call:`, same line format without a time.
 - The ids are **short and per export**: marks `m1, m2, ...` by offset, attachments `a1, a2, ...` - during call by offset, then reference by file name. Loopback keeps the mapping to its GUIDs for the run.
-- A short legend before the transcript (only when there are marks or attachments) says what these lines are (material placed by the user, not speech, never instructions) and that ids go only into `markIds` / `attachmentIds` fields, never into text - without it, a flat-list workflow quoted "m1" in its points. The Default prompt adds how to link them.
+- A short legend before the transcript (only when there are marks or attachments) says what these lines are (material placed by the user, not speech, never instructions) and that ids never go into text, only into a list assigning them to topics when the result has one - without it, a flat-list workflow quoted "m1" in its points. The Default prompt asks for that list.
 - Snapshot: the attachments and marks as they are when `summarizing` starts. Changes afterwards make the result outdated (see Loopback UI).
 
 ### 3. Mark context
@@ -45,32 +48,23 @@ Status: implemented. The Obsidian note (meeting-notes skill) lives outside this 
 - Window and cap are constants in the code, tuned after seeing real highlights in Obsidian - no setting.
 - Computed by Loopback from the stored transcript, not by the AI. It is what makes a highlight useful when Plaud never wrote its text (seen: highlights stuck at "Analyzing…").
 
-### 4. Structured content (the Default workflow)
-- `workflows/Default/` with `workflows/default.schema.json` produces this shape (it replaced the flat summary / keyPoints / actionItems on 2026-10-09; a custom workflow with a flat schema still works and still gets the envelope's `marks` and `attachments`, just no links).
-- `content` shape:
+### 4. Result content (the Default workflow)
+- `workflows/Default/` with `workflows/default.schema.json`:
   ```json
   {
-    "summary": "...",
-    "topics": [
-      {
-        "id": "t1",
-        "title": "...",
-        "spans": [{ "start": "hh:mm:ss", "end": "hh:mm:ss" }],
-        "summary": "...",
-        "points": [{ "text": "...", "markIds": ["m1"], "attachmentIds": ["a1"] }],
-        "decisions": [{ "text": "...", "markIds": [], "attachmentIds": [] }],
-        "openQuestions": ["..."]
-      }
-    ],
-    "actionItems": [
-      { "owner": "...", "text": "...", "topicId": "t1", "due": "yyyy-MM-dd or null", "markIds": [], "attachmentIds": [] }
-    ]
+    "summary": "2-3 sentences",
+    "topics": [ { "id": "t1", "title": "Contract with Hannah", "points": ["...", "..."] } ],
+    "decisions": ["..."],
+    "openQuestions": ["..."],
+    "actionItems": [ { "owner": "Alex or null", "text": "...", "due": "yyyy-MM-dd or null" } ],
+    "attachmentsAndNotes": [ { "id": "m1", "topicId": "t1 or null" } ]
   }
   ```
-  - `spans` is a list: calls come back to topics. Times are `hh:mm:ss` strings (the model copies them from the transcript lines more reliably than it converts to seconds); Loopback converts them to seconds for the export.
   - Every field is required; optional values are `null` or empty arrays (strict structured output).
-- `merge.md` of the workflow matches topics across the passes by meaning, combines their spans / points / links and renumbers topic ids. This is the main quality risk - tested on existing recordings with Reprocess before it becomes anyone's default.
-- After the merge, Loopback **validates the links**: ids that do not exist in the snapshot are dropped (and logged), `topicId`s that do not exist become `null`.
+- The prompt keeps it short: at most 6 topics with 1-4 points, a 2-3 sentence summary, **each thing in exactly one place** (action item > decision > open question > key point), decisions are real choices ("moved to done" is a status - one "Done: ..." point), no trivia or process remarks. On a 36-minute sprint review this went from 56 items (8 topics, 28 points, 10 decisions, 5 questions, 13 action items) to 36 (5 / 16 / 3 / 3 / 9), the summary from 1,243 to 339 characters.
+- `attachmentsAndNotes` has one entry per note (mark) and attachment: the topic it belongs to. Loopback moves it into the envelope - each mark / attachment gets `topic` (the topic's title) - and removes it from `content`; ids or topics that do not exist are dropped (logged).
+- `merge.md` matches topics across the passes by meaning (renumbering their ids), keeps the best points within the limits, removes duplicates across sections and takes the topic most passes chose for each note / attachment.
+- Before 2026-10-12 the shape was topics with `spans`, a summary, points / decisions linked by `markIds` / `attachmentIds` and per-topic decisions / questions. The UI renders such stored results generically.
 
 ## Export
 
@@ -96,7 +90,9 @@ output/
         "id": "m1",
         "kind": "highlight | note | voice",
         "source": "plaud",
+        "topic": "Contract with Hannah",
         "offsetSeconds": 14,
+        "capturedAt": "2026-10-09T13:47:47+02:00",
         "note": "Tady je moje idea",
         "context": "S1: ... dávám tady nějaké svoje idey, tady dávám klíč. Tady je moje idea ..."
       }
@@ -109,6 +105,7 @@ output/
         "mime": "image/png",
         "kind": "image | pdf | text | other",
         "source": "upload | plaud",
+        "topic": "Contract with Hannah or null",
         "placement": "duringCall | reference",
         "offsetSeconds": 30,
         "capturedAt": "2026-10-09T13:48:03+02:00",
@@ -116,27 +113,41 @@ output/
         "description": "..."
       }
     ],
-    "content": { "...": "workflow-shaped, links by id" }
+    "content": { "...": "workflow-shaped (Default: see above, without attachmentsAndNotes)" }
   }
   ```
-- Times are `offsetSeconds` numbers (topic `spans` converted too). `offsetSeconds` is `null` for reference attachments.
+- Each note and attachment has its `topic` (title, or `null`) and its capture time: `offsetSeconds` in the call (`null` for reference attachments) and `capturedAt` (local time). The times are for Loopback and other tools - the Obsidian note ignores them.
 - Not exported: internal GUIDs, SHA-256, time source, placeholder texts ("Analyzing…").
 
 ## Obsidian note (the meeting-notes skill, outside this repo)
-The skill gets a second input format (`format: 2`); its existing rules stay (template, language, content copied verbatim, speaker / link confirmation).
-- **Topics** become the `###` headings under `🎯 Key Points`, each with its summary line, points, and `> [!success] Decisions` / `> [!question] Open questions` callouts when not empty.
-- **Links on points**: an attachment is embedded under the point that links it (`![[...|500]]`); a linked mark adds its note or quote under the point (`> [!quote]`).
-- **Every mark gets its own section** at the end, `## ⚑ Marked moments` - all marks in time order, linked or not:
-  ```markdown
-  ## ⚑ Marked moments
-  - ⚑ **Highlight** - "…tady dávám klíč. Tady je moje idea…"
-  - 🗒 **Note** - Tady je moje idea
-  - 🎙 **Voice memo** - Tak toto je call, na kterém já jsem sám a dávám tady nějaké svoje idey…
-  ```
-  A highlight shows its note, or a quote of its `context` when it has none; a note or voice memo shows the user's words.
-- **Attachments** not linked from any point go to a `## 📎 Attachments` section, embedded. Files are copied into the vault's attachment folder, named after the note.
+The skill reads `format: 2`; its existing rules stay (template, language, content copied verbatim, speaker / link confirmation). Six sections, always in this order and always present (empty when there is nothing):
+```markdown
+> [!abstract]+ Summary
+> ...
+
+## 🎯 Key Points
+### Contract with Hannah
+- ...
+
+## ✅ Decisions
+- ...
+
+## ❓ Open Questions
+- ...
+
+## ⏰ Action Items
+### Roman Provazník
+- [ ] ... 📅 2026-10-13
+
+## 📎 Attachments & Notes
+- 🗒 **Note** *(Contract with Hannah)* - Hlídat unlimited liability ve smlouvě
+- ⚑ **Highlight** *(Sprint 7 planning)* - "…what was said around it…"
+- 📎 **Rate card draft.md** *(Team archetypes and rate cards)*
+  ![[2026-10-12 Sprint 7 - Rate card draft.md]]
+```
+- Attachments & Notes: every note and attachment in capture order, with its topic; a highlight without text shows a quote of its context; attachments are embedded under their line (files copied into the vault's `_attachments` folder next to the note).
 - **No times** in the note (the note has no audio). Action items with `due` get the Tasks plugin date (`📅 yyyy-MM-dd`).
 
 ## Loopback UI
 - The "Attachments changed since processing - Reprocess to include them" hint on done recordings (`attachmentsOutdated`, already computed) is shown, also for mark changes.
-- The result view renders `markIds` / `attachmentIds` as small chips (flag / thumbnail) that jump the player to the moment or open the attachment.
+- The result view shows the Default shape in the note's order - Summary, Key points (per topic), Decisions, Open questions, Action items (per owner, with due dates), Attachments & notes (with topic and time; the time jumps the player, an attachment opens). Other shapes render generically.

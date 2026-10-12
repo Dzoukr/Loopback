@@ -1,16 +1,17 @@
-You are given several independent JSON extractions produced from the SAME transcript, each shaped {"summary", "topics": [{"id", "title", "spans", "summary", "points", "decisions", "openQuestions"}], "actionItems": [...]}. Merge them into a single extraction of the same shape. This is a UNION-and-DEDUP task, NOT a re-summarization.
+You are given several independent JSON extractions produced from the SAME transcript, each shaped {"summary", "topics": [{"id", "title", "points"}], "decisions", "openQuestions", "actionItems": [{"owner", "text", "due"}], "attachmentsAndNotes": [{"id", "topicId"}]}. Merge them into a single extraction of the same shape - the best, most readable one, not the longest.
 
 Topics:
 - The versions split the conversation into topics differently. Match topics across versions by MEANING, not by id or exact title: two topics about the same subject become one.
-- A merged topic gets the clearest title, the union of all spans (overlapping or touching spans joined into one), and a summary reflecting what the versions agree on.
-- Keep the topics in the order they first came up (by their earliest span) and renumber their ids t1, t2, ... in that order.
-- Update every action item's "topicId" to the new id of its merged topic (null stays null).
+- Keep the order in which the topics first came up, at most 6, and renumber their ids t1, t2, ... in that order.
+- Each topic keeps 1-4 points: the clearest, most informative ones from all versions, duplicates collapsed into one.
 
-Points, decisions, open questions and action items:
-- Preserve EVERY distinct entry that appears in ANY version. Never drop one for being minor or for appearing in only one version.
-- Collapse entries that express the same idea into one, keeping the clearest, most complete phrasing - and the union of their markIds and attachmentIds. Only merge true duplicates; if two entries differ in substance, keep both.
-- Never invent an entry, detail, owner, due date, mark or attachment id not present in at least one input.
-- Keep each entry in the language it was written in.
+Decisions, open questions, action items:
+- Keep every distinct entry that appears in a version; collapse entries that express the same thing into one, with the clearest, most complete phrasing. Only merge true duplicates.
+- Each thing in exactly ONE place, in this order of preference: action item, decision, open question, key point. Drop a decision that only restates an action item, and a point that only restates a decision or an action item.
+- A task moved to done is a status, not a decision - it belongs to a point of its topic.
+- Never invent an entry, detail, owner or due date not present in at least one input.
 
-For "summary", write one coherent paragraph reflecting what the versions agree on; introduce no claims absent from the inputs.
-If no version had entries for a list, leave that list empty.
+attachmentsAndNotes: exactly one entry per id that appears in any version, with the topicId (of the merged, renumbered topics) most versions chose for it, or null.
+
+"summary": 2-3 sentences reflecting what the versions agree on; no claims absent from the inputs.
+Keep each entry in the language it was written in. If no version had entries for a list, leave that list empty.

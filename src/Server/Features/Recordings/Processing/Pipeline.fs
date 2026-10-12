@@ -274,13 +274,12 @@ type Pipeline(
                             logger.LogWarning("Recording {Id}: merge failed ({Error}), using the richest pass", r.Id, describe e)
                             return richest ()
                 }
-            // Links to marks / attachments that do not exist are dropped; topic spans become seconds.
+            // The topics the result assigned notes / attachments to go into the envelope's lists.
             let content = JsonNode.Parse(content.ToJsonString())
-            let dropped =
-                validateLinks content (exportMarks |> List.map _.ExportId |> Set.ofList) (exportAttachments |> List.map _.ExportId |> Set.ofList)
-            if dropped > 0 then
-                logger.LogWarning("Recording {Id}: {Count} links to unknown marks / attachments / topics dropped from the result", r.Id, dropped)
-            convertSpans content
+            let exportIds = (exportMarks |> List.map _.ExportId) @ (exportAttachments |> List.map _.ExportId) |> Set.ofList
+            let topics, invalid = assignTopics content exportIds
+            if invalid > 0 then
+                logger.LogWarning("Recording {Id}: {Count} topic assignments of notes / attachments referred to unknown ids or topics - left without a topic", r.Id, invalid)
             // The title is generated from the finished summary (not the raw transcript), together
             // with the recording's local date/time - the transcript does not contain it.
             let recordedAt = start.ToOffset localOffset
@@ -314,8 +313,8 @@ type Pipeline(
             envelope["recordedAt"] <- JsonValue.Create(recordedAt.ToString "o")
             envelope["durationSeconds"] <- JsonValue.Create(r.DurationMs / 1000L)
             envelope["processedAt"] <- JsonValue.Create(DateTimeOffset.UtcNow.ToString "o")
-            envelope["marks"] <- marksJson exportMarks
-            envelope["attachments"] <- attachmentsJson exportAttachments filesFolder localOffset
+            envelope["marks"] <- marksJson exportMarks topics start localOffset
+            envelope["attachments"] <- attachmentsJson exportAttachments topics filesFolder localOffset
             envelope["content"] <- content
 
             let! ok = stillIn r.Id Summarizing
