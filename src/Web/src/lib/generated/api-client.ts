@@ -10,6 +10,18 @@
  * ---------------------------------------------------------------
  */
 
+export interface AddMarkRequest {
+  recordingId: string;
+  atTime: boolean;
+  /** @format double */
+  offsetSeconds: number;
+  note: string;
+}
+
+export interface AddMarkResponse {
+  markId: string;
+}
+
 export interface AttachmentDto {
   id: string;
   fileName: string;
@@ -51,7 +63,7 @@ export interface MarkDto {
   id: string;
   kind: string;
   /** @format double */
-  offsetSeconds: number;
+  offsetSeconds: null | number;
   note: string;
   source: string;
   pending: boolean;
@@ -542,6 +554,23 @@ export class Api<
     ) =>
       this.request<SuccessResponse, any>({
         path: `/api/recordings/attachments/delete`,
+        method: "POST",
+        body: data,
+        type: "application/json",
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * No description
+     *
+     * @tags Server
+     * @name AddMark
+     * @request POST:/api/recordings/marks/add
+     */
+    addMark: (data: AddMarkRequest, params: RequestParams = {}) =>
+      this.request<AddMarkResponse, any>({
+        path: `/api/recordings/marks/add`,
         method: "POST",
         body: data,
         type: "application/json",

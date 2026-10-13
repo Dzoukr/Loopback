@@ -15,7 +15,8 @@ type Topic = { id: string; title: string; points: string[] };
 type ActionItem = { owner: string | null; text: string; due: string | null };
 type Structured = { summary: string; topics: Topic[]; decisions: string[]; openQuestions: string[]; actionItems: ActionItem[] };
 
-type ExportMark = { id: string; kind: string; topic: string | null; offsetSeconds: number; note: string | null; context: string };
+/** offsetSeconds and context are null for a note without a time. */
+type ExportMark = { id: string; kind: string; topic: string | null; offsetSeconds: number | null; note: string | null; context: string | null };
 type ExportAttachment = { id: string; fileName: string; kind: string; topic: string | null; offsetSeconds: number | null; note: string | null };
 
 type Envelope = { content?: Json; marks?: ExportMark[]; attachments?: ExportAttachment[] };

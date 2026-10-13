@@ -28,7 +28,7 @@ type Props = {
     recordingId: string;
     /** Attachments captured during the call appear between the turns, at their time. */
     attachments: AttachmentDto[];
-    /** Marks appear between the turns too. */
+    /** Marks appear between the turns too (notes without a time do not). */
     marks: MarkDto[];
     onOpenAttachment: (a: AttachmentDto) => void;
     onError: (message: string) => void;
@@ -40,7 +40,7 @@ type Placed = { type: "attachment"; item: AttachmentDto; offset: number } | { ty
 function placeBySegment(segments: TranscriptSegmentDto[], attachments: AttachmentDto[], marks: MarkDto[]): Map<number, Placed[]> {
     const items: Placed[] = [
         ...attachments.filter(isDuringCall).map((a) => ({ type: "attachment" as const, item: a, offset: a.offsetSeconds ?? 0 })),
-        ...marks.map((m) => ({ type: "mark" as const, item: m, offset: m.offsetSeconds })),
+        ...marks.flatMap((m) => (m.offsetSeconds === null ? [] : [{ type: "mark" as const, item: m, offset: m.offsetSeconds }])),
     ].sort((a, b) => a.offset - b.offset);
     const result = new Map<number, Placed[]>();
     for (const p of items) {

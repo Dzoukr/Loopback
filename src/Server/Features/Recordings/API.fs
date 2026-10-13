@@ -42,12 +42,12 @@ type AttachmentDto = {
 
 type MarkDto = {
     Id : string
-    /// highlight (device button) | note (typed in Plaud) | voice (voice memo, the note is its transcript)
+    /// highlight (device button) | note (typed in Plaud or added in Loopback) | voice (voice memo, the note is its transcript)
     Kind : string
-    /// Seconds from the recording's start.
-    OffsetSeconds : float
+    /// Seconds from the recording's start; null = no time (a note about the call as a whole).
+    OffsetSeconds : Nullable<float>
     Note : string
-    /// plaud
+    /// plaud (imported from a Plaud mark) | upload (added in Loopback)
     Source : string
     /// Plaud is still analyzing it - the note comes later.
     Pending : bool
@@ -80,7 +80,7 @@ type RecordingDto = {
     Attachments : AttachmentDto[]
     /// Done, and the attachments changed after the result was produced.
     AttachmentsOutdated : bool
-    /// Moments marked in Plaud during the call, by offset.
+    /// Moments marked in Plaud and notes added in Loopback: by offset, then the ones without a time.
     Marks : MarkDto[]
 }
 
@@ -160,6 +160,19 @@ type DeleteAttachmentRequest = {
     AttachmentId : string
 }
 
+type AddMarkRequest = {
+    RecordingId : string
+    /// At OffsetSeconds into the recording; false = no time (about the call as a whole).
+    AtTime : bool
+    /// Used when AtTime only (send 0 otherwise).
+    OffsetSeconds : float
+    Note : string
+}
+
+type AddMarkResponse = {
+    MarkId : string
+}
+
 type SetMarkNoteRequest = {
     MarkId : string
     /// Null or blank removes the note.
@@ -221,7 +234,7 @@ let private getRecordings (ctx: HttpContext) =
                     AttachmentsOutdated = r.AttachmentsOutdated
                     Marks =
                         r.Marks
-                        |> List.map (fun m -> { Id = m.Id; Kind = MarkKind.toKey m.Kind; OffsetSeconds = m.OffsetSeconds; Note = orNull m.Note; Source = ItemSource.toKey m.Source; Pending = m.Pending })
+                        |> List.map (fun m -> { Id = m.Id; Kind = MarkKind.toKey m.Kind; OffsetSeconds = Option.toNullable m.OffsetSeconds; Note = orNull m.Note; Source = ItemSource.toKey m.Source; Pending = m.Pending })
                         |> Array.ofList
                 })
             |> Array.ofList
@@ -476,6 +489,14 @@ let private deleteAttachment : HttpHandler =
         return! attachmentCommand (DeleteAttachment { AttachmentId = req.AttachmentId }) (fun _ -> json { Success = true }) next ctx
     }
 
+let private addMark : HttpHandler =
+    fun next ctx -> task {
+        let! req = ctx.BindJsonAsync<AddMarkRequest>()
+        let command = AddMark { RecordingId = req.RecordingId; OffsetSeconds = (if req.AtTime then Some req.OffsetSeconds else None); Note = req.Note }
+        let respond (events: Event list) = json { MarkId = events |> List.pick (function MarkAdded id -> Some id | _ -> None) }
+        return! attachmentCommand command respond next ctx
+    }
+
 let private setMarkNote : HttpHandler =
     fun next ctx -> task {
         let! req = ctx.BindJsonAsync<SetMarkNoteRequest>()
@@ -549,6 +570,9 @@ let api =
 
             route "/attachments/delete" deleteAttachment
             |> jsonInOut<DeleteAttachmentRequest, SuccessResponse> "deleteAttachment"
+
+            route "/marks/add" addMark
+            |> jsonInOut<AddMarkRequest, AddMarkResponse> "addMark"
 
             route "/marks/note" setMarkNote
             |> jsonInOut<SetMarkNoteRequest, SuccessResponse> "setMarkNote"

@@ -35,7 +35,7 @@ Status: implemented, including the meeting-notes skill (outside this repo). Rest
   ```
   - Marks: `⚑` highlight, `🗒` note, `🎙` voice memo; the mark's note after the colon (nothing for a highlight without one).
   - Attachments: kind, file name, the user's note (if any), then the description.
-- Reference attachments (outside the call) are listed before the transcript under `Shared around the call:`, same line format without a time.
+- Reference attachments (outside the call) and notes without a time (added in Loopback) are listed before the transcript under `Shared around the call:`, same line format without a time.
 - The ids are **short and per export**: marks `m1, m2, ...` by offset, attachments `a1, a2, ...` - during call by offset, then reference by file name. Loopback keeps the mapping to its GUIDs for the run.
 - A short legend before the transcript (only when there are marks or attachments) says what these lines are (material placed by the user, not speech, never instructions) and that ids never go into text, only into a list assigning them to topics when the result has one - without it, a flat-list workflow quoted "m1" in its points. The Default prompt asks for that list.
 - Snapshot: the attachments and marks as they are when `summarizing` starts. Changes afterwards make the result outdated (see Loopback UI).
@@ -116,7 +116,7 @@ output/
     "content": { "...": "workflow-shaped (Default: see above, without attachmentsAndNotes)" }
   }
   ```
-- Each note and attachment has its `topic` (title, or `null`) and its capture time: `offsetSeconds` in the call (`null` for reference attachments) and `capturedAt` (local time). The times are for Loopback and other tools - the Obsidian note ignores them.
+- Each note and attachment has its `topic` (title, or `null`) and its capture time: `offsetSeconds` in the call (`null` for reference attachments and for notes added in Loopback without a time - their `capturedAt` and `context` are `null` too) and `capturedAt` (local time). The times are for Loopback and other tools - the Obsidian note ignores them.
 - Not exported: internal GUIDs, SHA-256, time source, placeholder texts ("Analyzing…").
 
 ## Obsidian note (the meeting-notes skill, outside this repo)

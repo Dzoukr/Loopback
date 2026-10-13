@@ -97,7 +97,8 @@ type AttachmentRow = {
 type MarkRow = {
     Id : string
     RecordingId : string
-    OffsetMs : int64
+    /// None = no time, a note about the call as a whole (Migrations/012_UserNotes.sql).
+    OffsetMs : int64 option
     Note : string option
     Source : string
     /// SQLite boolean (0 / 1).

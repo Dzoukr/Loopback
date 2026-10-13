@@ -17,7 +17,7 @@ Status: Part 1 is implemented, including Plaud Marks.
   - **During call** - the capture time falls inside the recording (with 60 s tolerance on both ends, clamped to the recording). Has an **offset** (seconds from the recording start).
   - **Reference** - the capture time is outside the recording, or unknown. Belongs to the call as a whole (a deck sent beforehand, a pasted image).
   Placement is derived at read time, so a Plaud update of the recording's start time (`version_ms` change) moves the attachments with it.
-- **Mark** - a moment in the call without a file: a press of the Plaud device button (highlight), a text note typed in the Plaud app, or a voice memo recorded in it (the note is its transcript). Has a kind, an offset and an optional note. Marks come from Plaud only (see Plaud Marks).
+- **Mark** - a moment in the call without a file: a press of the Plaud device button (highlight), a text note typed in the Plaud app, or a voice memo recorded in it (the note is its transcript). Has a kind, an offset and an optional note. Marks come from Plaud (see Plaud Marks) or are notes added in Loopback (see Notes added in Loopback).
 
 ## User Flow
 1. The user drops files onto a recording card (or uses the paperclip button on the card, or pastes from the clipboard while the card is active).
@@ -183,11 +183,18 @@ Plaud lets the user mark moments during a recording. They are imported during sy
   - `Recordings`: `HasPlaudMarks`, `PlaudMarksVersion` (`version_ms` of the last import), `PlaudMarksCheckedAt` - set by their own `UPDATE`s, not part of `RecordingRow`.
 - Migration `010_VoiceMemoMarks.sql`: `Marks.Kind`; voice memos imported as audio attachments by the first version are removed (rows, import keys, files) and their recordings imported again.
 
+## Notes added in Loopback
+- A **note** button (sticky note) next to the paperclip in the card header opens an "Add note" dialog: the note text, and its time.
+- The time is the player's position once the user put the player somewhere (clicked / dragged the waveform, played, jumped to a time or a pin); otherwise the note starts **without a time** - about the call as a whole. The dialog can change either (`hh:mm:ss`, Use playback position, No time).
+- Stored as a mark: kind `note`, `Source = upload`, `UserEdited = 1`, `OffsetMs` NULL when without a time (migration `012_UserNotes.sql` makes `Marks.OffsetMs` nullable - a table rebuild). The note is required (up to 1000 characters).
+- Timed notes behave like Plaud marks (waveform pin, transcript row, marks list); notes without a time are listed after the timed ones with a "No time" badge, and are not on the waveform or in the transcript.
+- API: `POST /marks/add` (`{ recordingId, atTime, offsetSeconds, note }` - `offsetSeconds` is used with `atTime` only) -> `{ markId }`. Edit note / delete as for Plaud marks.
+- Processing: a note without a time is listed with the reference attachments under `Shared around the call:`; in the export its `offsetSeconds`, `capturedAt` and `context` are `null` (docs/attachments-processing.md).
+
 ## Out of Scope (Part 1)
 - AI description / OCR of attachments, attachments in the summary input, links from the result content, the exported files and `attachments` in the result JSON - all Part 2.
 - Dragging tiles onto transcript segments to place them (Edit time + Use playback position covers it).
 - Attaching to a recording before it exists in Loopback (e.g. screenshots taken before the Plaud sync) - they can be attached once it syncs; their capture time places them correctly.
 - URL attachments and chat-log import.
 - Thumbnail generation, HEIC conversion.
-- Creating marks in Loopback ("mark this moment" at the playback position) - a natural follow-up.
 - Writing anything back to Plaud.

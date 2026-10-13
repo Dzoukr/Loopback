@@ -289,6 +289,40 @@ type StorageCommandHandler(
             | None -> return raise (Collections.Generic.KeyNotFoundException $"Mark {id} not found")
         }
 
+    /// A note added in Loopback, at a moment of the call or without a time (the call as a whole).
+    let addMark (args: CommandArgs.AddMark) =
+        task {
+            let! r = getAttachable args.RecordingId
+            let note =
+                match args.Note |> Option.ofObj |> Option.map _.Trim() with
+                | Some n when n.Length > 1000 -> raise (AttachmentRejected "The note is longer than 1000 characters")
+                | Some n when n <> "" -> n
+                | _ -> raise (AttachmentRejected "The note is empty")
+            let offsetMs =
+                args.OffsetSeconds
+                |> Option.map (fun seconds ->
+                    let durationSeconds = float r.DurationMs / 1000.
+                    if not (Double.IsFinite seconds) || seconds < 0. || seconds > durationSeconds then
+                        raise (AttachmentRejected $"The time must be within the recording (0 - {durationSeconds:F0} s)")
+                    int64 (seconds * 1000.))
+            let id = Guid.NewGuid().ToString "N"
+            let now = Db.now ()
+            do! marks.Insert {
+                Id = id
+                RecordingId = r.Id
+                OffsetMs = offsetMs
+                Note = Some note
+                Source = ItemSource.toKey Uploaded
+                Pending = 0L
+                UserEdited = 1L
+                CreatedAt = now
+                UpdatedAt = now
+                Kind = MarkKind.toKey NoteMark
+            }
+            do! recordings.TouchAttachments r.Id
+            return [ MarkAdded id ]
+        }
+
     /// The user's note wins from now on - Plaud's late text for a pending highlight never overwrites it.
     let setMarkNote (args: CommandArgs.SetMarkNote) =
         task {
@@ -346,6 +380,7 @@ type StorageCommandHandler(
                 | SetAttachmentTime args -> return! setAttachmentTime args
                 | SetAttachmentNote args -> return! setAttachmentNote args
                 | DeleteAttachment args -> return! deleteAttachment args
+                | AddMark args -> return! addMark args
                 | SetMarkNote args -> return! setMarkNote args
                 | DeleteMark args -> return! deleteMark args
             }

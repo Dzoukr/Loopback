@@ -5,7 +5,7 @@ import type { DragEvent } from "react";
 import type { AttachmentDto, WorkflowDto, RecordingDto } from "@/lib/generated/api-client";
 import { deleteRecording, processRecording, reprocessRecording, retryRecording } from "./actions";
 import { attachmentUrl, isDuringCall, markKindOf, pastedLastModified, uploadAttachment } from "./attachments";
-import { AttachmentsView, Lightbox, MarksList, openAttachment, type UploadTile } from "./attachmentsView";
+import { AddNoteDialog, AttachmentsView, Lightbox, MarksList, openAttachment, type UploadTile } from "./attachmentsView";
 import { AudioPlayer, type PlayerHandle } from "./audioPlayer";
 import { ResultView } from "./resultView";
 import { TranscriptView } from "./transcriptView";
@@ -61,6 +61,8 @@ export function RecordingCard({ recording, workflows, active, onActivate, draggi
     const [dropOver, setDropOver] = useState(false);
     const [previewing, setPreviewing] = useState<AttachmentDto | null>(null);
     const [highlightedId, setHighlightedId] = useState<string | null>(null);
+    /** The add-note dialog is open, starting at this time (null = without a time). */
+    const [addingNote, setAddingNote] = useState<{ seconds: number | null } | null>(null);
     const playerRef = useRef<PlayerHandle>(null);
     const fileInput = useRef<HTMLInputElement>(null);
 
@@ -148,11 +150,11 @@ export function RecordingCard({ recording, workflows, active, onActivate, draggi
             label: a.fileName,
             thumbnailUrl: a.kind === "image" ? attachmentUrl(recording.id, a.id) : undefined,
         })),
-        ...marks.map((m) => ({
+        ...marks.filter((m) => m.offsetSeconds !== null).map((m) => ({
             id: m.id,
             kind: "mark" as const,
             icon: markKindOf(m.kind).icon,
-            ratio: ratioOf(m.offsetSeconds),
+            ratio: ratioOf(m.offsetSeconds ?? 0),
             label: `${markKindOf(m.kind).label}: ${m.note ?? (m.pending ? "analyzing in Plaud…" : "no note")}`,
         })),
     ];
@@ -249,7 +251,7 @@ ${consequence}`)) return;
                                 <button
                                     className="rounded-full bg-warning/15 px-2 py-0.5 font-medium text-warning hover:bg-warning/25"
                                     onClick={() => setAttachmentsOpen(true)}
-                                    title="Marks made in Plaud"
+                                    title="Marks made in Plaud and notes"
                                 >
                                     <i className="fa-solid fa-flag mr-1.5"></i>{marks.length}
                                 </button>
@@ -272,6 +274,14 @@ ${consequence}`)) return;
                         title="Attach files (or drop them on this card, or paste with Ctrl+V)"
                     >
                         <i className="fa-solid fa-paperclip"></i>
+                    </button>
+                    <button
+                        className="btn btn-ghost btn-sm btn-square rounded-lg text-base-content/50 hover:text-warning"
+                        onClick={() => setAddingNote({ seconds: playerRef.current?.chosenSeconds() ?? null })}
+                        aria-label="Add note"
+                        title="Add a note - at the player's position once you clicked the waveform, else without a time"
+                    >
+                        <i className={`fa-solid ${markKindOf("note").icon}`}></i>
                     </button>
                     <input
                         ref={fileInput}
@@ -428,6 +438,17 @@ ${consequence}`)) return;
                 )}
             </div>
 
+            {addingNote && (
+                <AddNoteDialog
+                    recordingId={recording.id}
+                    durationSeconds={recording.durationMs / 1000}
+                    initialSeconds={addingNote.seconds}
+                    playbackSeconds={() => playerRef.current?.positionSeconds() ?? 0}
+                    onClose={() => setAddingNote(null)}
+                    onSaved={() => { setAddingNote(null); setAttachmentsOpen(true); onChanged(); }}
+                    onError={onError}
+                />
+            )}
             {previewing && <Lightbox recordingId={recording.id} attachment={previewing} onClose={() => setPreviewing(null)} />}
         </div>
     );

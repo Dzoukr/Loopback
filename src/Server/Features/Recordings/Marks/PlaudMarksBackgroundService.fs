@@ -154,7 +154,7 @@ type PlaudMarksBackgroundService(
                             do! marks.Insert {
                                 Id = id
                                 RecordingId = c.Id
-                                OffsetMs = m.OffsetMs
+                                OffsetMs = Some m.OffsetMs
                                 Note = note
                                 Source = ItemSource.toKey FromPlaudMark
                                 Pending = (if m.Pending then 1L else 0L)

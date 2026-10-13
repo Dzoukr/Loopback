@@ -37,7 +37,7 @@ let private toMark (r: RecordingRow) (m: MarkRow) : Queries.Mark =
         Id = m.Id
         RecordingId = m.RecordingId
         Kind = MarkKind.fromKey m.Kind
-        OffsetSeconds = Math.Clamp(float m.OffsetMs / 1000., 0., max 0. (float r.DurationMs / 1000.))
+        OffsetSeconds = m.OffsetMs |> Option.map (fun ms -> Math.Clamp(float ms / 1000., 0., max 0. (float r.DurationMs / 1000.)))
         Note = m.Note
         Source = ItemSource.fromKey m.Source
         Pending = m.Pending <> 0L
@@ -89,7 +89,10 @@ let private toRecording (attachments: AttachmentRow list) (marks: MarkRow list) 
             && match attachmentsChangedAt, processedAt r.Result with
                | Some changed, Some processed -> changed > processed
                | _ -> false
-        Marks = marks |> List.map (toMark r) |> List.sortBy _.OffsetSeconds
+        Marks =
+            marks
+            |> List.sortBy (fun m -> m.OffsetMs.IsNone, m.OffsetMs, m.CreatedAt)
+            |> List.map (toMark r)
     }
 
 /// SQLite-backed implementation of RecordingsQueries

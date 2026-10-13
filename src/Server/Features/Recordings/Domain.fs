@@ -173,13 +173,14 @@ module Queries =
         CreatedAt : DateTimeOffset
     }
 
-    /// A moment in the call without a file (a Plaud highlight, text note or voice memo).
+    /// A moment in the call without a file (a Plaud highlight, text note or voice memo), or a note
+    /// added in Loopback - at a moment or about the call as a whole.
     type Mark = {
         Id : string
         RecordingId : string
         Kind : MarkKind
-        /// Seconds from the recording start (clamped to the recording).
-        OffsetSeconds : float
+        /// Seconds from the recording start (clamped to the recording); None = no time.
+        OffsetSeconds : float option
         Note : string option
         Source : ItemSource
         /// Plaud is still analyzing it - the note comes later.
@@ -219,7 +220,7 @@ module Queries =
         Attachments : Attachment list
         /// Done, and attachments were added / changed / deleted after the result was produced.
         AttachmentsOutdated : bool
-        /// By offset.
+        /// By offset, then the ones without a time by creation.
         Marks : Mark list
     }
 
@@ -326,6 +327,14 @@ module CommandArgs =
         AttachmentId : string
     }
 
+    /// A note added in Loopback (kind note).
+    type AddMark = {
+        RecordingId : string
+        /// Seconds from the recording's start; None = about the call as a whole.
+        OffsetSeconds : float option
+        Note : string
+    }
+
     type SetMarkNote = {
         MarkId : string
         /// None (or blank) removes the note.
@@ -350,6 +359,7 @@ type Command =
     | SetAttachmentTime of CommandArgs.SetAttachmentTime
     | SetAttachmentNote of CommandArgs.SetAttachmentNote
     | DeleteAttachment of CommandArgs.DeleteAttachment
+    | AddMark of CommandArgs.AddMark
     | SetMarkNote of CommandArgs.SetMarkNote
     | DeleteMark of CommandArgs.DeleteMark
 
@@ -388,6 +398,7 @@ type Event =
     | AttachmentAlreadyExists of EventArgs.AttachmentAdded
     | AttachmentUpdated of attachmentId: string
     | AttachmentDeleted of attachmentId: string
+    | MarkAdded of markId: string
     | MarkUpdated of markId: string
     | MarkDeleted of markId: string
 

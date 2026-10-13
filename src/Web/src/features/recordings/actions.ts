@@ -70,6 +70,11 @@ export async function deleteAttachment(attachmentId: string): Promise<void> {
     await createApiClient().deleteAttachment({ attachmentId });
 }
 
+/** Adds a note `offsetSeconds` into the recording, or without a time (null - the call as a whole). */
+export async function addMark(recordingId: string, offsetSeconds: number | null, note: string): Promise<void> {
+    await createApiClient().addMark({ recordingId, atTime: offsetSeconds !== null, offsetSeconds: offsetSeconds ?? 0, note });
+}
+
 /** Sets a mark's note; blank removes it. Plaud's late text never overwrites it afterwards. */
 export async function setMarkNote(markId: string, note: string): Promise<void> {
     await createApiClient().setMarkNote({ markId, note });

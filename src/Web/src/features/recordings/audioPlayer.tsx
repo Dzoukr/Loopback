@@ -13,6 +13,8 @@ export type PlayerHandle = {
     /** Moves to `seconds`; starts playback only if it was already playing. */
     seekTo: (seconds: number) => void;
     positionSeconds: () => number;
+    /** The position once the user put the player somewhere (clicked the waveform, played, jumped to a time), else null. */
+    chosenSeconds: () => number | null;
 };
 
 type Props = {
@@ -38,6 +40,7 @@ export function AudioPlayer({ recordingId, durationMs, peaks, markers, onMarkerC
     const [loading, setLoading] = useState(false);
     const [playing, setPlaying] = useState(false);
     const [progress, setProgress] = useState(0);
+    const [positioned, setPositioned] = useState(false);
 
     const duration = (() => {
         const d = audioRef.current?.duration;
@@ -54,6 +57,7 @@ export function AudioPlayer({ recordingId, durationMs, peaks, markers, onMarkerC
     const playFrom = async (ratio?: number) => {
         const audio = audioRef.current;
         if (!audio) return;
+        setPositioned(true);
         if (!src) {
             loadSource(ratio ?? progress);
             return;
@@ -72,9 +76,11 @@ export function AudioPlayer({ recordingId, durationMs, peaks, markers, onMarkerC
             // Not loaded yet: remember the position, the next play starts there.
             if (audio && src) audio.currentTime = ratio * duration;
             setProgress(ratio);
+            setPositioned(true);
         },
         positionSeconds: () => progress * duration,
-    }), [duration, src, progress]);
+        chosenSeconds: () => (positioned ? progress * duration : null),
+    }), [duration, src, progress, positioned]);
 
     const toggle = () => {
         if (playing) audioRef.current?.pause();
@@ -105,6 +111,7 @@ export function AudioPlayer({ recordingId, durationMs, peaks, markers, onMarkerC
                         const audio = audioRef.current;
                         if (audio && src) audio.currentTime = ratio * duration;
                         setProgress(ratio);
+                        setPositioned(true);
                         onMarkerClick?.(id);
                     }}
                     height={44}

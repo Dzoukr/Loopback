@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import type { AttachmentDto, MarkDto } from "@/lib/generated/api-client";
-import { deleteAttachment, deleteMark, setAttachmentNote, setAttachmentTime, setMarkNote } from "./actions";
+import { addMark, deleteAttachment, deleteMark, setAttachmentNote, setAttachmentTime, setMarkNote } from "./actions";
 import { attachmentUrl, formatOffset, formatSize, isDuringCall, kindIcons, markKindOf, parseOffset, placementLabel } from "./attachments";
 import { formatClock } from "./utils";
 
@@ -62,7 +62,7 @@ type MarksProps = {
     onError: (message: string) => void;
 };
 
-/** Moments marked in Plaud during the call (device highlights, text notes, voice memos). */
+/** Moments marked in Plaud during the call (device highlights, text notes, voice memos) and notes added in Loopback. */
 export function MarksList({ marks, highlightedId, onSeek, onChanged, onError }: MarksProps) {
     const [editing, setEditing] = useState<{ id: string; note: string } | null>(null);
     const [saving, setSaving] = useState(false);
@@ -82,7 +82,7 @@ export function MarksList({ marks, highlightedId, onSeek, onChanged, onError }: 
     };
 
     const remove = async (m: MarkDto) => {
-        if (!window.confirm("Delete this mark? It will not be imported from Plaud again.")) return;
+        if (!window.confirm(m.source === "plaud" ? "Delete this mark? It will not be imported from Plaud again." : "Delete this note?")) return;
         try {
             await deleteMark(m.id);
             onChanged();
@@ -100,13 +100,19 @@ export function MarksList({ marks, highlightedId, onSeek, onChanged, onError }: 
                     className={`group flex items-start gap-2 rounded-lg border px-2 py-1.5 transition ${
                         highlightedId === m.id ? "border-warning ring-2 ring-warning/40" : "border-base-content/8 bg-base-100"}`}
                 >
-                    <button
-                        className="shrink-0 rounded-full bg-warning/15 px-1.5 py-0.5 font-mono text-[11px] font-medium text-warning hover:bg-warning/25"
-                        onClick={() => onSeek(m.offsetSeconds)}
-                        title={`${markKindOf(m.kind).label} - jump to this moment`}
-                    >
-                        <i className={`fa-solid ${markKindOf(m.kind).icon} mr-1`}></i>{formatClock(m.offsetSeconds)}
-                    </button>
+                    {m.offsetSeconds !== null ? (
+                        <button
+                            className="shrink-0 rounded-full bg-warning/15 px-1.5 py-0.5 font-mono text-[11px] font-medium text-warning hover:bg-warning/25"
+                            onClick={() => onSeek(m.offsetSeconds ?? 0)}
+                            title={`${markKindOf(m.kind).label} - jump to this moment`}
+                        >
+                            <i className={`fa-solid ${markKindOf(m.kind).icon} mr-1`}></i>{formatClock(m.offsetSeconds)}
+                        </button>
+                    ) : (
+                        <span className="shrink-0 rounded-full bg-base-content/8 px-1.5 py-0.5 text-[11px] font-medium text-base-content/70" title={`${markKindOf(m.kind).label} about the call as a whole`}>
+                            <i className={`fa-solid ${markKindOf(m.kind).icon} mr-1`}></i>No time
+                        </span>
+                    )}
                     {editing?.id === m.id ? (
                         <div className="flex flex-1 flex-col gap-1.5">
                             <textarea
@@ -366,6 +372,104 @@ function EditDialog({ attachment, durationSeconds, playbackSeconds, onClose, onS
                         disabled={saving || (!timeChanged && !noteChanged) || (mode === "offset" && !offsetValid)}
                     >
                         {saving && <span className="loading loading-spinner loading-xs"></span>}Save
+                    </button>
+                </div>
+            </div>
+            <div className="modal-backdrop bg-base-300/60" onClick={() => { if (!saving) onClose(); }}></div>
+        </dialog>,
+        document.body,
+    );
+}
+
+/**
+ * Adds a note at `initialSeconds` (where the user put the player), or without a time when the player
+ * was not positioned (null) - both can be changed in the dialog.
+ */
+export function AddNoteDialog({ recordingId, durationSeconds, initialSeconds, playbackSeconds, onClose, onSaved, onError }: {
+    recordingId: string;
+    durationSeconds: number;
+    initialSeconds: number | null;
+    playbackSeconds: () => number;
+    onClose: () => void;
+    onSaved: () => void;
+    onError: (message: string) => void;
+}) {
+    const [atTime, setAtTime] = useState(initialSeconds !== null);
+    const [time, setTime] = useState(formatOffset(initialSeconds ?? playbackSeconds()));
+    const [note, setNote] = useState("");
+    const [saving, setSaving] = useState(false);
+
+    const offset = parseOffset(time);
+    const offsetValid = offset !== null && offset <= Math.ceil(durationSeconds);
+    const canSave = !saving && note.trim() !== "" && (!atTime || offsetValid);
+
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !saving) onClose(); };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [onClose, saving]);
+
+    const save = async () => {
+        if (!canSave) return;
+        setSaving(true);
+        try {
+            await addMark(recordingId, atTime ? Math.min(offset ?? 0, durationSeconds) : null, note);
+            onSaved();
+        } catch {
+            onError("Could not add the note.");
+            setSaving(false);
+        }
+    };
+
+    // Portal: the card's backdrop-filter would confine the fixed modal to the card.
+    return createPortal(
+        <dialog className="modal modal-open" aria-labelledby="note-add-title">
+            <div className="modal-box max-w-md">
+                <h3 id="note-add-title" className="flex items-center gap-2 text-lg font-semibold">
+                    <i className={`fa-solid ${markKindOf("note").icon} text-warning`}></i>Add note
+                </h3>
+
+                <textarea
+                    className="textarea mt-4 w-full"
+                    rows={3}
+                    maxLength={1000}
+                    value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) save(); }}
+                    placeholder="What matters here…"
+                    aria-label="Note"
+                    autoFocus
+                />
+
+                <fieldset className="mt-3 space-y-2">
+                    <legend className="mb-1 text-sm font-semibold">Time</legend>
+                    <label className="flex flex-wrap items-center gap-2 text-sm">
+                        <input type="radio" className="radio radio-sm radio-primary" checked={atTime} onChange={() => setAtTime(true)} />
+                        At
+                        <input
+                            className={`input input-sm w-28 font-mono ${atTime && !offsetValid ? "input-error" : ""}`}
+                            value={time}
+                            onChange={(e) => { setTime(e.target.value); setAtTime(true); }}
+                            placeholder="hh:mm:ss"
+                            aria-label="Time in the recording"
+                        />
+                        <button className="btn btn-ghost btn-xs" onClick={() => { setTime(formatOffset(playbackSeconds())); setAtTime(true); }} title="Set to where the player is now">
+                            <i className="fa-solid fa-crosshairs"></i>Use playback position
+                        </button>
+                    </label>
+                    {atTime && !offsetValid && (
+                        <p className="pl-7 text-xs text-error">Enter a time within the recording (up to {formatOffset(durationSeconds)}).</p>
+                    )}
+                    <label className="flex items-center gap-2 text-sm">
+                        <input type="radio" className="radio radio-sm radio-primary" checked={!atTime} onChange={() => setAtTime(false)} />
+                        No time - the call as a whole
+                    </label>
+                </fieldset>
+
+                <div className="modal-action">
+                    <button className="btn btn-sm btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
+                    <button className="btn btn-sm btn-primary" onClick={save} disabled={!canSave}>
+                        {saving && <span className="loading loading-spinner loading-xs"></span>}Add
                     </button>
                 </div>
             </div>
