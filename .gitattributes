@@ -1,0 +1,4 @@
+# Batch files must keep CRLF - they are zipped on Linux into starter-pack.zip and cmd.exe misparses LF
+*.cmd text eol=crlf
+# Shell scripts must keep LF (this clone may use core.autocrlf)
+*.sh text eol=lf

@@ -1,0 +1,39 @@
+# Loopback - start/stop with loopback-up.cmd / loopback-down.cmd (they also manage the
+# host-side Claude bridge, which cannot run in a container). UI: http://localhost:3000
+name: loopback
+
+services:
+  server:
+    image: ghcr.io/dzoukr/loopback-server:${LOOPBACK_VERSION:-latest}
+    restart: unless-stopped
+    # All settings incl. secrets (gitignored; template .env.example)
+    env_file: .env
+    # Container-side paths; they override the same names from .env (where LOOPBACK_OUTPUT is the
+    # host folder mounted below)
+    environment:
+      LOOPBACK_WORKFLOWS: /config/workflows
+      LOOPBACK_DATA: /data
+      LOOPBACK_OUTPUT: /output
+    volumes:
+      # Workflows (prompts), read-only - edit them in ./workflows
+      - ./workflows:/config/workflows:ro
+      # SQLite database (holds the Plaud session - treat as sensitive). A named volume, not a
+      # bind mount: SQLite's WAL locking does not work across Docker Desktop's VM boundary.
+      # Copy it out with `docker compose cp server:/data/loopback.db .`
+      - loopback-data:/data
+      # Result JSON files - LOOPBACK_OUTPUT in .env (default ./output)
+      - "${LOOPBACK_OUTPUT:-./output}:/output"
+    # claude-bridge.fsx on the host is reached via host.docker.internal (Docker Desktop).
+
+  web:
+    image: ghcr.io/dzoukr/loopback-web:${LOOPBACK_VERSION:-latest}
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      API_URL: http://server:8080
+    depends_on:
+      - server
+
+volumes:
+  loopback-data:

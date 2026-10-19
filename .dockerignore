@@ -9,3 +9,4 @@ artifacts
 **/obj
 src/Web
 *.log*
+starter-pack

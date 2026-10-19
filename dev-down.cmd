@@ -1,13 +1,13 @@
 @echo off
 setlocal
 REM ============================================================================
-REM loopback-down.cmd - stops local Loopback dev (counterpart of loopback-up.cmd):
+REM dev-down.cmd - stops local Loopback dev (counterpart of dev-up.cmd):
 REM   1) closes the backend (dotnet watch) and frontend (next dev) windows, with their child processes
 REM   2) stops the Claude bridge
 REM
-REM The LoopbackDocker stack loopback-up.cmd stopped is not restarted - run LoopbackDocker's
+REM The Docker stack dev-up.cmd stopped is not restarted - run the starter pack's
 REM loopback-up.cmd for that (it starts the bridge again too).
-REM The windows are found by the "title Loopback Server/Web" marker loopback-up.cmd puts in their
+REM The windows are found by the "title Loopback Server/Web" marker dev-up.cmd puts in their
 REM cmd command line; the bridge by its command line (dotnet ... claude-bridge.fsx), since its port
 REM is held by Windows' HTTP.sys (PID 4).
 REM ============================================================================

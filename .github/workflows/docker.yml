@@ -1,8 +1,10 @@
 # Builds the server and web images and pushes them to GitHub Container Registry:
-#   push to main  -> :latest
-#   tag v1.4.0    -> :1.4.0
-# Images: ghcr.io/<owner>/loopback-server, ghcr.io/<owner>/loopback-web (private like the repo;
-# pull with `docker login ghcr.io` + a token with read:packages).
+#   push to main  -> :latest, plus the rolling prerelease "latest" with starter-pack.zip
+#   tag v1.4.0    -> :1.4.0, plus a GitHub release v1.4.0 with starter-pack.zip
+# Every run also builds starter-pack.zip as the run's "starter-pack" artifact.
+# Images: ghcr.io/<owner>/loopback-server, ghcr.io/<owner>/loopback-web.
+# starter-pack.zip = starter-pack/ + workflows/ + claude-bridge.fsx, in one Loopback/ folder. It runs
+# :latest by default, so re-running its loopback-up.cmd updates the app without a new zip.
 name: Docker images
 
 on:
@@ -69,3 +71,53 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  # After both images are pushed, so a release never points at images that do not exist.
+  starter-pack:
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Assemble
+        run: |
+          mkdir -p dist/Loopback
+          cp -r starter-pack/. workflows claude-bridge.fsx dist/Loopback/
+          chmod +x dist/Loopback/*.sh
+
+      # Uploaded as a folder: the artifact download itself is starter-pack.zip (no zip in a zip).
+      # Artifacts drop the executable bit - run the .sh files with `sh` there; the release zip keeps it.
+      - uses: actions/upload-artifact@v6
+        with:
+          name: starter-pack
+          path: dist/
+          include-hidden-files: true
+
+      - name: Zip
+        run: (cd dist && zip -r ../starter-pack.zip Loopback)
+
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: gh release create "$GITHUB_REF_NAME" starter-pack.zip --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      # Rolling prerelease: the "latest" tag follows main, its zip is replaced on every build.
+      # Fixed link: https://github.com/<owner>/Loopback/releases/download/latest/starter-pack.zip
+      # (a prerelease, so /releases/latest still means the newest v* release).
+      - name: Update latest prerelease
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git tag -f latest "$GITHUB_SHA"
+          git push -f origin refs/tags/latest
+          notes="Rolling build of main ($GITHUB_SHA) - runs the :latest images. For a stable version use the newest v* release."
+          if gh release view latest >/dev/null 2>&1; then
+            gh release edit latest --prerelease --notes "$notes"
+          else
+            gh release create latest --prerelease --title "Latest (main)" --notes "$notes"
+          fi
+          gh release upload latest starter-pack.zip --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
