@@ -89,7 +89,7 @@ type StorageCommandHandler(
                 | Some f -> f
                 | None -> raise (UnsupportedAudio "not an MP3 or Ogg (Vorbis / Opus) file")
             let length = duration args.AudioFile format
-            let id = $"upload-{Guid.NewGuid():N}"
+            let id = Guid.CreateVersion7().ToString "N"
             let path = audio.Import(id, args.AudioFile, format)
             try
                 let now = Db.now ()
@@ -201,7 +201,7 @@ type StorageCommandHandler(
                     | n -> n
                 let kind, contentType = FileKind.detect args.File fileName
                 let capturedAt, source = CaptureTime.detect args.ReportedCapturedAt fileName args.File args.FileModifiedAt (localOffset r) DateTimeOffset.UtcNow
-                let id = Guid.NewGuid().ToString "N"
+                let id = Guid.CreateVersion7().ToString "N"
                 attachmentFiles.Import(r.Id, id, args.File)
                 let now = Db.now ()
                 try
@@ -305,7 +305,7 @@ type StorageCommandHandler(
                     if not (Double.IsFinite seconds) || seconds < 0. || seconds > durationSeconds then
                         raise (AttachmentRejected $"The time must be within the recording (0 - {durationSeconds:F0} s)")
                     int64 (seconds * 1000.))
-            let id = Guid.NewGuid().ToString "N"
+            let id = Guid.CreateVersion7().ToString "N"
             let now = Db.now ()
             do! marks.Insert {
                 Id = id

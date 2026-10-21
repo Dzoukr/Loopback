@@ -149,7 +149,7 @@ type PlaudMarksBackgroundService(
                 | None ->
                     let addMark (kind: MarkKind) (note: string option) =
                         task {
-                            let id = Guid.NewGuid().ToString "N"
+                            let id = Guid.CreateVersion7().ToString "N"
                             let now = Db.now ()
                             do! marks.Insert {
                                 Id = id

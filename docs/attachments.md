@@ -89,7 +89,7 @@ Detected by the backend from these sources, first match wins:
 - SQLite, new table (migration `008_Attachments.sql`):
   ```sql
   CREATE TABLE Attachments (
-      -- GUID ("N" format).
+      -- Version 7 GUID ("N" format, sorts by creation time).
       Id              TEXT    PRIMARY KEY,
       RecordingId     TEXT    NOT NULL,
       -- Original file name incl. extension (display, export name in Part 2).
