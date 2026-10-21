@@ -30,7 +30,7 @@ type SpeechmaticsConfiguration = {
     MaxJobMinutes : int
 }
 
-/// Bridge connection only - model, effort, passes and timeout are per workflow (workflows/default.claude.json, workflows/<Name>/claude.json).
+/// Bridge connection only - model, effort, passes and timeout are per workflow (workflows/claude.default.json, workflows/<Name>/claude.json).
 type ClaudeConfiguration = {
     BridgeUrl : string
     Token : string

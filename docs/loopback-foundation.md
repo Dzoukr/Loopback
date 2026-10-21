@@ -67,12 +67,12 @@ Both jobs are ASP.NET `BackgroundService`s inside the backend. All job state liv
   - `title.md` - system prompt for title generation (single run, plain text)
   - `summary.md` - system prompt for converting the transcript to information (shaped by the schema)
   - `merge.md` - system prompt for merging the ensemble passes together
-- Optionally, a subfolder can also contain `schema.json` - the JSON Schema used for converting the transcript to information (summary and merge runs) for that workflow. If it is absent, `workflows/default.schema.json` is used: summary, topics with key points, decisions, open questions, action items (owner, due date) and the topic of each note / attachment. See `docs/attachments-processing.md`.
+- Optionally, a subfolder can also contain `schema.json` - the JSON Schema used for converting the transcript to information (summary and merge runs) for that workflow. If it is absent, `workflows/schema.default.json` is used: summary, topics with key points, decisions, open questions, action items (owner, due date) and the topic of each note / attachment. See `docs/attachments-processing.md`.
 - A subfolder missing any of the 3 prompt files is not offered in the UI (and is logged as a warning); so is one whose resolved schema is missing or not valid JSON Schema. Prompt and schema files are re-read on every run, so edits apply without restart.
 - The backend validates the summary/merge result against the resolved schema, then writes the final `JSON` file as a fixed envelope with the result nested inside:
   `{ "title", "workflow", "sourceName", "sourceId", "recordedAt", "durationSeconds", "processedAt", "content": { ...schema-shaped result... } }`
   The envelope is fixed; only `content` varies by workflow. `sourceName` is `plaud` or `upload`, `sourceId` the Plaud file id or the upload's `upload-{guid}` id (the recording id). Results produced before uploads existed had `plaudFileId` instead; `007_Source.sql` renamed it in the stored results, files already in the output folder keep it.
-- Claude settings per workflow: `workflows/default.claude.json` holds `model` (haiku | sonnet | opus | full `claude-*` id), `effort` (low | medium | high | xhigh | max), `passes` (1-10), `timeoutSeconds` (1-3600, per claude call), `describeModel` and `describeEffort` (describing attachments) for all workflows (built-in defaults: sonnet, high, 3, 300, haiku, low). A workflow can override single keys with its own `claude.json` next to `title.md` (e.g. `{ "model": "opus" }` keeps the shared effort and passes). One model + effort is used for the title, the summary passes and the merge, so the merge is never weaker than the passes it merges. Unknown keys or invalid values hide the workflow from the UI with a logged warning (caught before anything is transcribed and paid for). Bridge infrastructure (`CLAUDE_BRIDGE_URL`, `CLAUDE_BRIDGE_TOKEN`, `MAX_CONCURRENCY`) stays in `.env`. `MAX_CONCURRENCY` caps parallel `claude` processes for the whole bridge; passes beyond it queue and the queueing counts against the timeout, so the backend logs a warning when a workflow's `passes` exceeds it (read from the bridge's `/health`).
+- Claude settings per workflow: `workflows/claude.default.json` holds `model` (haiku | sonnet | opus | full `claude-*` id), `effort` (low | medium | high | xhigh | max), `passes` (1-10), `timeoutSeconds` (1-3600, per claude call), `describeModel` and `describeEffort` (describing attachments) for all workflows (built-in defaults: sonnet, high, 3, 300, haiku, low). A workflow can override single keys with its own `claude.json` next to `title.md` (e.g. `{ "model": "opus" }` keeps the shared effort and passes). One model + effort is used for the title, the summary passes and the merge, so the merge is never weaker than the passes it merges. Unknown keys or invalid values hide the workflow from the UI with a logged warning (caught before anything is transcribed and paid for). Bridge infrastructure (`CLAUDE_BRIDGE_URL`, `CLAUDE_BRIDGE_TOKEN`, `MAX_CONCURRENCY`) stays in `.env`. `MAX_CONCURRENCY` caps parallel `claude` processes for the whole bridge; passes beyond it queue and the queueing counts against the timeout, so the backend logs a warning when a workflow's `passes` exceeds it (read from the bridge's `/health`).
 - Ensemble: `passes` identical summary runs (`summary.md`) in parallel, then a merge run (`merge.md`), using the same model and schema. `passes: 1` disables it (`merge.md` unused); a failed merge falls back to the richest pass.
 
 ## Claude Bridge
@@ -111,11 +111,11 @@ Both jobs are ASP.NET `BackgroundService`s inside the backend. All job state liv
   - Required: `PLAUD_EMAIL`, `PLAUD_PASSWORD`, `SPEECHMATICS_API_KEY`, `CLAUDE_BRIDGE_TOKEN`.
   - Optional (defaults in `.env.example` and `Configuration.fs`): `LOOPBACK_OUTPUT`, `PLAUD_SYNC_INTERVAL_MINUTES`, `SPEECHMATICS_MODEL`, `SPEECHMATICS_LANGUAGE`, `SPEECHMATICS_MAX_JOB_MINUTES`, `CLAUDE_BRIDGE_URL`, `MAX_CONCURRENCY`, `PROCESSING_POLL_SECONDS`.
 - Distribution: two images (`ghcr.io/dzoukr/loopback-server`, `ghcr.io/dzoukr/loopback-web`, built by `.github/workflows/docker.yml`: `main` -> `:latest`, tag `v1.4.0` -> `:1.4.0` and a GitHub release with `starter-pack.zip`) plus that zip. The host needs Docker Desktop, the .NET SDK and a logged-in `claude` CLI (the bridge cannot run in a container); the start scripts exist for Windows (`.cmd`) and macOS / Linux (`.sh`). Docker Desktop is required on Linux too: the bridge listens on `127.0.0.1` only, which `host.docker.internal` reaches on Docker Desktop but not on a plain Docker Engine.
-  - `workflows/` - `default.schema.json` and `default.claude.json` plus one subfolder per workflow, each with `title.md`, `summary.md`, `merge.md` and optional `schema.json` / `claude.json`:
+  - `workflows/` - `schema.default.json` and `claude.default.json` plus one subfolder per workflow, each with `title.md`, `summary.md`, `merge.md` and optional `schema.json` / `claude.json`:
     ```
     workflows/
-      default.schema.json
-      default.claude.json  (model, effort, passes, timeoutSeconds, describeModel, describeEffort for all workflows)
+      schema.default.json
+      claude.default.json  (model, effort, passes, timeoutSeconds, describeModel, describeEffort for all workflows)
       describe.md          (optional - system prompt for describing attachments; built-in default)
       Default/
         title.md
@@ -125,6 +125,6 @@ Both jobs are ASP.NET `BackgroundService`s inside the backend. All job state liv
         title.md
         summary.md
         merge.md
-        schema.json          (optional - overrides default.schema.json for this workflow)
-        claude.json          (optional - overrides single keys of default.claude.json)
+        schema.json          (optional - overrides schema.default.json for this workflow)
+        claude.json          (optional - overrides single keys of claude.default.json)
     ```

@@ -17,7 +17,7 @@ Status: implemented, including the meeting-notes skill (outside this repo). Rest
 ### 1. Describe attachments (new step, before the summary passes)
 - Every attachment the AI can read - **image, pdf, text** - gets a description by Claude: what it shows, plus the text in it (OCR: ticket numbers, figures, slide text). One run per attachment, plain text, in the language of the call.
 - Stored in the attachment's `Description` and **cached by SHA-256**: Reprocess and Retry never describe the same file again. Claude's description replaces Plaud's (Plaud's photo descriptions are generic and have no OCR).
-- Model: **`haiku`** (effort `low`) - one small call per attachment; screenshots and slides need reading, not reasoning. Set in `workflows/default.claude.json` as `describeModel` / `describeEffort` (overridable per workflow like the other keys), so it can be raised to `sonnet` if haiku's descriptions turn out too thin. The cache key includes the model, so a change re-describes on the next run.
+- Model: **`haiku`** (effort `low`) - one small call per attachment; screenshots and slides need reading, not reasoning. Set in `workflows/claude.default.json` as `describeModel` / `describeEffort` (overridable per workflow like the other keys), so it can be raised to `sonnet` if haiku's descriptions turn out too thin. The cache key includes the model, so a change re-describes on the next run.
 - `other` files (Office, archives, audio, ...) are not described - they are listed by name only (and note, if any).
 - The Claude Bridge gets file input for this: `POST /run` accepts `files: [{ name, base64 }]` (plain names, up to 40 MB of body), writes them to a folder of the run's own (its cwd, deleted afterwards) and runs `claude` with `--tools Read --allowedTools Read` instead of `--tools ""`. Calls without files keep running exactly as today. `GET /health` says `files: true`; with an older bridge Loopback skips describing (logged) instead of caching a description of a file claude never saw.
 - Only files up to 20 MB are described; the prompt is `workflows/describe.md` when it exists, else a built-in one, and gets the file name, the user's note and a sample of the conversation (for the language).
@@ -49,7 +49,7 @@ Status: implemented, including the meeting-notes skill (outside this repo). Rest
 - Computed by Loopback from the stored transcript, not by the AI. It is what makes a highlight useful when Plaud never wrote its text (seen: highlights stuck at "Analyzing…").
 
 ### 4. Result content (the Default workflow)
-- `workflows/Default/` with `workflows/default.schema.json`:
+- `workflows/Default/` with `workflows/schema.default.json`:
   ```json
   {
     "summary": "2-3 sentences",

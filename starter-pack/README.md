@@ -40,8 +40,8 @@ Re-running the up script updates the app itself (it pulls the newest images). Oc
 
 A workflow decides how a recording is processed. Each subfolder of `workflows/` is one workflow (the folder name appears in the UI) with three prompts: `summary.md`, `merge.md`, `title.md`. Optionally add:
 
-- `schema.json` - shape of the result (default: `workflows/default.schema.json` - summary, key points per topic, decisions, open questions, action items with owner and due date, and the topic of each note / attachment)
-- `claude.json` - override `model`, `effort`, `passes`, `timeoutSeconds`, `describeModel` or `describeEffort` from `workflows/default.claude.json`
+- `schema.json` - shape of the result (default: `workflows/schema.default.json` - summary, key points per topic, decisions, open questions, action items with owner and due date, and the topic of each note / attachment)
+- `claude.json` - override `model`, `effort`, `passes`, `timeoutSeconds`, `describeModel` or `describeEffort` from `workflows/claude.default.json`
 
 `workflows/describe.md` (optional) replaces the built-in prompt for describing attachments.
 

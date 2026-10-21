@@ -17,7 +17,7 @@
 //   CLAUDE_BRIDGE_URL       port is taken from it        (default 9100)
 //   CLAUDE_BRIDGE_TOKEN     shared secret, X-Bridge-Token (required)
 //   MAX_CONCURRENCY         max parallel claude processes (default 4)
-// The timeout is per request (`timeoutSeconds`, set per workflow in default.claude.json /
+// The timeout is per request (`timeoutSeconds`, set per workflow in claude.default.json /
 // claude.json): default 300 s, capped at 3600 s so a typo cannot leave claude running for hours.
 //   CLAUDE_BIN              claude binary                 (default: `claude` on PATH)
 //
