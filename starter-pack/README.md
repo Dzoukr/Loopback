@@ -18,7 +18,7 @@ Optionally set `LOOPBACK_OUTPUT` to where the result files should go (e.g. your 
 
 | Windows | macOS / Linux | |
 |---|---|---|
-| `loopback-up.cmd` | `./loopback-up.sh` | Start - or update to the newest images. UI: http://localhost:3000 |
+| `loopback-up.cmd` | `./loopback-up.sh` | Start - or update to the newest images. UI: http://localhost:3001 |
 | `loopback-down.cmd` | `./loopback-down.sh` | Stop everything (your data is kept) |
 
 The up script also starts the Claude bridge (`claude-bridge.fsx`) on the host and registers it to start at logon (Windows: `HKCU\...\Run`, macOS: `~/Library/LaunchAgents/local.loopback.claude-bridge.plist`, Linux: systemd user unit `loopback-claude-bridge.service`) - a container cannot use your `claude` login, so it runs outside Docker. Its log is `claude-bridge.log`. When `claude-bridge.fsx` was updated (see Updating), the up script restarts the running bridge. On macOS / Linux the logon autostart gets the `PATH` of the shell you ran `loopback-up.sh` from, so run it where `dotnet` and `claude` are found.

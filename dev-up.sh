@@ -1,10 +1,10 @@
 #!/bin/sh
 # ============================================================================
 # dev-up.sh - runs Loopback locally in watch mode on macOS / Linux (dev-up.cmd on Windows):
-#   1) stops the Docker stack (starter pack) if it runs (port 3000 + two servers sharing one Plaud session)
+#   1) stops the Docker stack (starter pack) if it runs (port 3001 + two servers sharing one Plaud session)
 #   2) starts the host-side Claude bridge (claude-bridge.fsx) if it is not running
 #   3) runs the backend:  dotnet watch    (http://localhost:5000, Swagger at /swagger)
-#   4) runs the frontend: next dev        (UI: http://localhost:3000)
+#   4) runs the frontend: next dev        (UI: http://localhost:3001)
 #
 # Backend and frontend run in this terminal (output interleaved); Ctrl+C stops both, the bridge
 # keeps running. dev-down.sh (from another terminal) stops it all.
@@ -106,5 +106,5 @@ stop() {
 }
 trap stop INT TERM HUP EXIT
 
-echo "Loopback dev is starting: http://localhost:3000  (API http://localhost:5000/swagger) - Ctrl+C to stop"
+echo "Loopback dev is starting: http://localhost:3001  (API http://localhost:5000/swagger) - Ctrl+C to stop"
 wait

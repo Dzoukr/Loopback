@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 3001",
     "build": "next build",
     "generate:api": "swagger-typescript-api generate -p http://localhost:5000/openapi/v1.json -o src/lib/generated -n api-client.ts --axios --generate-union-enums"
   },

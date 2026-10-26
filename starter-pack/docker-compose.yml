@@ -1,5 +1,5 @@
 # Loopback - start/stop with loopback-up.cmd / loopback-down.cmd (they also manage the
-# host-side Claude bridge, which cannot run in a container). UI: http://localhost:3000
+# host-side Claude bridge, which cannot run in a container). UI: http://localhost:3001
 name: loopback
 
 services:
@@ -29,7 +29,7 @@ services:
     image: ghcr.io/dzoukr/loopback-web:${LOOPBACK_VERSION:-latest}
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
       API_URL: http://server:8080
     depends_on:

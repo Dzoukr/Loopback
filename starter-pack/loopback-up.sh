@@ -3,7 +3,7 @@
 # loopback-up.sh - starts (or updates) Loopback on macOS / Linux (loopback-up.cmd on Windows):
 #   1) starts the host-side Claude bridge (claude-bridge.fsx) if it is not running
 #   2) registers the bridge for logon autostart (macOS: LaunchAgent, Linux: systemd user unit)
-#   3) pulls the latest images and starts them  (UI: http://localhost:3000)
+#   3) pulls the latest images and starts them  (UI: http://localhost:3001)
 #
 # A container cannot run the host's `claude`, so the bridge lives outside Compose.
 # Needs: Docker Desktop running, .NET SDK (dotnet fsi), claude CLI logged in.
@@ -124,7 +124,7 @@ esac
 
 # --- Docker stack (always pulls, so re-running updates Loopback) ---
 if docker compose up -d --pull always; then
-    echo "Loopback is running: http://localhost:3000"
+    echo "Loopback is running: http://localhost:3001"
 else
     RC=$?
     echo "ERROR: docker compose failed - is Docker Desktop running?"

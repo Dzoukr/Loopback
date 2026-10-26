@@ -2,10 +2,10 @@
 setlocal enabledelayedexpansion
 REM ============================================================================
 REM dev-up.cmd - runs Loopback locally in watch mode:
-REM   1) stops the Docker stack (starter pack) if it runs (port 3000 + two servers sharing one Plaud session)
+REM   1) stops the Docker stack (starter pack) if it runs (port 3001 + two servers sharing one Plaud session)
 REM   2) starts the host-side Claude bridge (claude-bridge.fsx) if it is not running
 REM   3) opens a window with the backend:  dotnet watch    (http://localhost:5000, Swagger at /swagger)
-REM   4) opens a window with the frontend: next dev        (UI: http://localhost:3000)
+REM   4) opens a window with the frontend: next dev        (UI: http://localhost:3001)
 REM
 REM Close a window (or Ctrl+C in it) to stop that part; dev-down.cmd stops it all.
 REM Uses data\dev\loopback.db (a copy of the Docker stack's database volume made on first run;
@@ -72,6 +72,6 @@ start "Loopback Server (dotnet watch)" /d "%ROOT%src\Server" cmd /k title Loopba
 REM --- Frontend: API_URL defaults to http://localhost:5000 (src/Web/src/env.ts) ---
 start "Loopback Web (next dev)" /d "%ROOT%src\Web" cmd /k title Loopback Web ^& yarn dev
 
-echo Loopback dev is starting: http://localhost:3000  (API http://localhost:5000/swagger)
+echo Loopback dev is starting: http://localhost:3001  (API http://localhost:5000/swagger)
 popd
 endlocal

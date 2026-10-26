@@ -4,7 +4,7 @@ REM ============================================================================
 REM loopback-up.cmd - starts (or updates) Loopback:
 REM   1) starts the host-side Claude bridge (claude-bridge.fsx) if it is not running
 REM   2) registers the bridge for logon autostart (HKCU Run - no admin needed)
-REM   3) pulls the latest images and starts them  (UI: http://localhost:3000)
+REM   3) pulls the latest images and starts them  (UI: http://localhost:3001)
 REM
 REM A container cannot run the host's `claude`, so the bridge lives outside Compose.
 REM Needs: Docker Desktop running, .NET SDK (dotnet fsi), claude CLI logged in.
@@ -52,6 +52,6 @@ reg add "%RUN%" /v "%RUNKEY%" /t REG_SZ /d "%BRIDGE%" /f >nul && echo Bridge aut
 REM --- Docker stack (always pulls, so re-running updates Loopback) ---
 docker compose up -d --pull always
 set "RC=%errorlevel%"
-if "%RC%"=="0" (echo Loopback is running: http://localhost:3000) else (echo ERROR: docker compose failed - is Docker Desktop running?)
+if "%RC%"=="0" (echo Loopback is running: http://localhost:3001) else (echo ERROR: docker compose failed - is Docker Desktop running?)
 popd
 endlocal & exit /b %RC%
