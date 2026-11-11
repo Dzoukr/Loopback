@@ -24,8 +24,29 @@ function speakerName(speaker: string): string {
     return match ? `Speaker ${match[1]}` : speaker;
 }
 
+/** One line per speaker turn (blank line between, so Markdown keeps them apart). */
+function toMarkdown(segments: TranscriptSegmentDto[]): string {
+    return segments.map((s) => `**${speakerName(s.speaker)}:** ${s.text.trim()}`).join("\n\n") + "\n";
+}
+
+/** Recording name usable as a file name. */
+function safeFileName(name: string): string {
+    return name.replace(/\.[^.]+$/, "").replace(/[\\/:*?"<>|]+/g, "_").trim() || "transcript";
+}
+
+function download(fileName: string, content: string, type: string) {
+    const url = URL.createObjectURL(new Blob([content], { type }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    URL.revokeObjectURL(url);
+}
+
 type Props = {
     recordingId: string;
+    /** Base name of the downloaded files (the recording's title). */
+    name: string;
     /** Attachments captured during the call appear between the turns, at their time. */
     attachments: AttachmentDto[];
     /** Marks appear between the turns too (notes without a time do not). */
@@ -79,7 +100,7 @@ function PlacedRow({ placed, recordingId, onOpenAttachment }: { placed: Placed; 
 }
 
 /** The raw transcript as stored after transcription: one block per speaker turn, with its start time. */
-export function TranscriptView({ recordingId, attachments, marks, onOpenAttachment, onError }: Props) {
+export function TranscriptView({ recordingId, name, attachments, marks, onOpenAttachment, onError }: Props) {
     const [segments, setSegments] = useState<TranscriptSegmentDto[] | null>(null);
     // The list re-renders on every poll; a ref keeps a new onError from refetching.
     const onErrorRef = useRef(onError);
@@ -110,24 +131,44 @@ export function TranscriptView({ recordingId, attachments, marks, onOpenAttachme
     const placedRows = (index: number) => placed.get(index)?.map((p) =>
         <PlacedRow key={p.item.id} placed={p} recordingId={recordingId} onOpenAttachment={onOpenAttachment} />);
 
+    const baseName = safeFileName(name);
+
     return (
-        <div className="max-h-[32rem] space-y-3 overflow-y-auto pr-2">
-            {placedRows(-1)}
-            {segments.map((s, i) => {
-                const color = colorOf.get(s.speaker) ?? unknown;
-                return (
-                    <div key={i} className="space-y-3">
-                        <div className={`border-l-2 pl-3 ${color.bar}`}>
-                            <div className="flex items-baseline gap-2 text-xs">
-                                <span className={`font-semibold ${color.label}`}>{speakerName(s.speaker)}</span>
-                                <span className="font-mono tabular-nums text-base-content/50">{formatClock(s.start)} – {formatClock(s.end)}</span>
+        <div className="space-y-2">
+            <div className="flex justify-end gap-1">
+                <button
+                    className="btn btn-ghost btn-xs rounded-lg text-base-content/60"
+                    onClick={() => download(`${baseName}.md`, toMarkdown(segments), "text/markdown;charset=utf-8")}
+                    title="Download the transcript as Markdown"
+                >
+                    <i className="fa-solid fa-download"></i>MD
+                </button>
+                <button
+                    className="btn btn-ghost btn-xs rounded-lg text-base-content/60"
+                    onClick={() => download(`${baseName}.json`, JSON.stringify(segments, null, 2), "application/json;charset=utf-8")}
+                    title="Download the transcript as JSON (segments with speaker and times)"
+                >
+                    <i className="fa-solid fa-download"></i>JSON
+                </button>
+            </div>
+            <div className="max-h-[32rem] space-y-3 overflow-y-auto pr-2">
+                {placedRows(-1)}
+                {segments.map((s, i) => {
+                    const color = colorOf.get(s.speaker) ?? unknown;
+                    return (
+                        <div key={i} className="space-y-3">
+                            <div className={`border-l-2 pl-3 ${color.bar}`}>
+                                <div className="flex items-baseline gap-2 text-xs">
+                                    <span className={`font-semibold ${color.label}`}>{speakerName(s.speaker)}</span>
+                                    <span className="font-mono tabular-nums text-base-content/50">{formatClock(s.start)} – {formatClock(s.end)}</span>
+                                </div>
+                                <p className="mt-0.5 whitespace-pre-line">{s.text}</p>
                             </div>
-                            <p className="mt-0.5 whitespace-pre-line">{s.text}</p>
+                            {placedRows(i)}
                         </div>
-                        {placedRows(i)}
-                    </div>
-                );
-            })}
+                    );
+                })}
+            </div>
         </div>
     );
 }

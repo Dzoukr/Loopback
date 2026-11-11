@@ -401,7 +401,7 @@ ${consequence}`)) return;
                         </summary>
                         <div className="collapse-content text-sm">
                             {/* Loaded on first open only - a long recording has hundreds of segments. */}
-                            {transcriptOpened && <TranscriptView recordingId={recording.id} attachments={attachments} marks={marks} onOpenAttachment={open} onError={onError} />}
+                            {transcriptOpened && <TranscriptView recordingId={recording.id} name={recording.title ?? recording.filename} attachments={attachments} marks={marks} onOpenAttachment={open} onError={onError} />}
                         </div>
                     </details>
                 )}
