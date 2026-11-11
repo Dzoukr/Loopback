@@ -9,7 +9,16 @@ import { AddNoteDialog, AttachmentsView, Lightbox, MarksList, openAttachment, ty
 import { AudioPlayer, type PlayerHandle } from "./audioPlayer";
 import { ResultView } from "./resultView";
 import { TranscriptView } from "./transcriptView";
-import { formatDateTime, formatDuration } from "./utils";
+import { downloadText, formatDateTime, formatDuration, safeFileName } from "./utils";
+
+/** Indented for reading; stored as-is when it is not valid JSON. */
+function prettyJson(text: string): string {
+    try {
+        return JSON.stringify(JSON.parse(text), null, 2);
+    } catch {
+        return text;
+    }
+}
 
 const steps = ["queued", "transcribing", "summarizing", "done"];
 
@@ -377,7 +386,16 @@ ${consequence}`)) return;
                             <i className="fa-solid fa-file-lines mr-2 text-success"></i>Result
                             {recording.outputFile && <code className="ml-2 rounded bg-base-content/8 px-1.5 py-0.5 font-mono text-xs font-normal text-base-content/60">{recording.outputFile}</code>}
                         </summary>
-                        <div className="collapse-content text-sm">
+                        <div className="collapse-content space-y-2 text-sm">
+                            <div className="flex justify-end">
+                                <button
+                                    className="btn btn-ghost btn-xs rounded-lg text-base-content/60"
+                                    onClick={() => downloadText(`${safeFileName(recording.title ?? recording.filename)}.result.json`, prettyJson(recording.result ?? ""), "application/json;charset=utf-8")}
+                                    title="Download the result as JSON"
+                                >
+                                    <i className="fa-solid fa-download"></i>JSON
+                                </button>
+                            </div>
                             <ResultView
                                 result={recording.result}
                                 onSeek={(seconds) => playerRef.current?.seekTo(seconds)}

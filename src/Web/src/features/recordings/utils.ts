@@ -29,3 +29,18 @@ export function formatClock(seconds: number): string {
     const sec = String(s % 60).padStart(2, "0");
     return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
 }
+
+/** Recording name usable as a file name (no extension, no characters Windows forbids). */
+export function safeFileName(name: string): string {
+    return name.replace(/\.[^.]+$/, "").replace(/[\\/:*?"<>|]+/g, "_").trim() || "recording";
+}
+
+/** Saves text generated in the browser as a file. */
+export function downloadText(fileName: string, content: string, type: string) {
+    const url = URL.createObjectURL(new Blob([content], { type }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    URL.revokeObjectURL(url);
+}

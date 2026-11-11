@@ -5,7 +5,7 @@ import type { AttachmentDto, MarkDto, TranscriptSegmentDto } from "@/lib/generat
 import { getTranscript } from "./actions";
 import { isDuringCall, markKindOf } from "./attachments";
 import { AttachmentThumb } from "./attachmentsView";
-import { formatClock } from "./utils";
+import { downloadText, formatClock, safeFileName } from "./utils";
 
 // Per-speaker colors in order of first appearance (full class names, so Tailwind keeps them).
 const speakerColors = [
@@ -27,20 +27,6 @@ function speakerName(speaker: string): string {
 /** One line per speaker turn (blank line between, so Markdown keeps them apart). */
 function toMarkdown(segments: TranscriptSegmentDto[]): string {
     return segments.map((s) => `**${speakerName(s.speaker)}:** ${s.text.trim()}`).join("\n\n") + "\n";
-}
-
-/** Recording name usable as a file name. */
-function safeFileName(name: string): string {
-    return name.replace(/\.[^.]+$/, "").replace(/[\\/:*?"<>|]+/g, "_").trim() || "transcript";
-}
-
-function download(fileName: string, content: string, type: string) {
-    const url = URL.createObjectURL(new Blob([content], { type }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = fileName;
-    link.click();
-    URL.revokeObjectURL(url);
 }
 
 type Props = {
@@ -138,14 +124,14 @@ export function TranscriptView({ recordingId, name, attachments, marks, onOpenAt
             <div className="flex justify-end gap-1">
                 <button
                     className="btn btn-ghost btn-xs rounded-lg text-base-content/60"
-                    onClick={() => download(`${baseName}.md`, toMarkdown(segments), "text/markdown;charset=utf-8")}
+                    onClick={() => downloadText(`${baseName}.transcript.md`, toMarkdown(segments), "text/markdown;charset=utf-8")}
                     title="Download the transcript as Markdown"
                 >
                     <i className="fa-solid fa-download"></i>MD
                 </button>
                 <button
                     className="btn btn-ghost btn-xs rounded-lg text-base-content/60"
-                    onClick={() => download(`${baseName}.json`, JSON.stringify(segments, null, 2), "application/json;charset=utf-8")}
+                    onClick={() => downloadText(`${baseName}.transcript.json`, JSON.stringify(segments, null, 2), "application/json;charset=utf-8")}
                     title="Download the transcript as JSON (segments with speaker and times)"
                 >
                     <i className="fa-solid fa-download"></i>JSON
