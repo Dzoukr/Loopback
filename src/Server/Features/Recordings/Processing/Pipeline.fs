@@ -223,10 +223,14 @@ type Pipeline(
                 match r.Workflow |> Option.bind workflows.TryLoad with
                 | Some n -> n
                 | None -> failwith $"Workflow '{defaultArg r.Workflow String.Empty}' no longer exists in workflows/"
-            let segments =
+            let transcript =
                 match r.Transcript with
-                | Some t -> JsonSerializer.Deserialize<Segment list>(t, Serialization.options)
+                | Some t -> t
                 | None -> failwith "no stored transcript"
+            let segments = JsonSerializer.Deserialize<Segment list>(transcript, Serialization.options)
+            // Also on Reprocess, which starts here with the stored transcript.
+            let! filled = fillMarkNotes marks r.Id transcript
+            if filled > 0 then logger.LogInformation("Recording {Id}: {Count} marks got the transcript around them as their note", r.Id, filled)
             let localOffset = TimeSpan.FromMinutes(float (defaultArg r.UtcOffsetMinutes 0L))
             let start = DateTimeOffset.FromUnixTimeMilliseconds r.StartTime
             let duration = TimeSpan.FromMilliseconds(float r.DurationMs)

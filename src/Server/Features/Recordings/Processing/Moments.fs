@@ -100,7 +100,7 @@ let markContext (segments: Segment list) (offsetSeconds: float) =
 
 /// Plaud marks that came without any text (Plaud 4.0 app flags, highlights Plaud never analyzed) with
 /// the transcript around them as their note. Notes the user edited are left alone; the rest are unchanged
-/// and not returned.
+/// and not returned. A textless `voice` mark is a 4.0 flag imported before Loopback knew them - it becomes a highlight.
 let transcriptNotes (segments: Segment list) (marks: MarkRow list) =
     marks
     |> List.choose (fun m ->
@@ -111,7 +111,7 @@ let transcriptNotes (segments: Segment list) (marks: MarkRow list) =
                              && (m.Note |> Option.forall String.IsNullOrWhiteSpace) ->
             match markContext segments (float offsetMs / 1000.) with
             | "" -> None
-            | context -> Some { m with Note = Some context }
+            | context -> Some { m with Note = Some context; Kind = MarkKind.toKey HighlightMark }
         | _ -> None)
 
 /// Short export ids: marks by offset (then the ones without a time by creation), attachments during call
