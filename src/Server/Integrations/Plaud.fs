@@ -1,5 +1,7 @@
 /// Client for Plaud's private API (no public API exists - reverse-engineered, see
 /// docs/riffado-plaud-sync-analysis.md, sections 7 and 8 for what was verified live).
+/// Recordings use the Plaud 4.0 `/file-app/v4/...` API (since 2026-11-15; the 3.x `/file/...`
+/// endpoints answer status -1800907 "Account migrated to 4.0" for migrated accounts).
 /// Every response shape is treated as unstable and parsed defensively.
 module Loopback.Server.Integrations.Plaud
 
@@ -146,16 +148,36 @@ type WorkspaceSession = {
     RefreshExpiresAt : DateTimeOffset
 }
 
+/// Plaud 4.0 (2026-11) gave every recording a new id: `of_<old id>` for recordings migrated
+/// from 3.x, `f_<id>` for new ones. Loopback keeps the old ids of migrated recordings (its rows,
+/// audio and attachment folders use them), so the `of_` prefix is dropped on the way in and
+/// added back on the way out.
+let private migratedPrefix = "of_"
+
+/// Loopback's id of a Plaud 4.0 file id.
+let localId (plaudId: string) =
+    if plaudId.StartsWith migratedPrefix then plaudId.Substring migratedPrefix.Length else plaudId
+
+/// Plaud 4.0 file id of a Loopback recording id.
+let plaudId (localId: string) =
+    if localId.StartsWith "f_" || localId.StartsWith migratedPrefix then localId else migratedPrefix + localId
+
+/// A recording as listed by `/file-app/v4/recordings/all` (ids already Loopback's, see `localId`).
 type PlaudFile = {
     Id : string
     Filename : string
     StartTime : DateTimeOffset
     DurationMs : int64
-    Filesize : int64
     VersionMs : string
-    /// Local UTC offset of the recording (Plaud `timezone` hours + `zonemins`).
-    UtcOffsetMinutes : int
-    /// `is_markmemo`: the recording has marks made during the call (see GetMarks).
+}
+
+/// What only `/file-app/v4/files/detail` tells about a recording.
+type PlaudFileDetail = {
+    /// Size of the Opus audio.
+    Filesize : int64
+    /// Local UTC offset at the recording start (from `timezone_iana`); None if Plaud has no time zone.
+    UtcOffsetMinutes : int option
+    /// The recording has marks made during the call (a non-empty `MARK_MEMO` object, see GetMarks).
     HasMarks : bool
 }
 
@@ -189,15 +211,10 @@ type PlaudMark = {
     FileUrl : string option
 }
 
-/// Marks of a recording from its `/file/detail` answer: the `mark_memo` content item, inline in
-/// `pre_download_content_list` (or None when only its `data_link` has it), and the file URLs.
+/// Marks of a recording from the content of its `MARK_MEMO` object; `urls` maps a mark's
+/// `picture_link` to its presigned URL (`relation_content_mapping` of the detail, as web.plaud.ai does).
 /// Handles both the Plaud app's format and the device's (with `mark_status`, `is_user_deleted`, ...).
-let parseMarks (detail: JsonNode) (content: string option) : PlaudMark list =
-    let d = get detail [ "data" ]
-    let urls =
-        match get d [ "download_path_mapping" ] with
-        | :? JsonObject as o -> o |> Seq.map (fun kv -> kv.Key, str kv.Value) |> Map.ofSeq
-        | _ -> Map.empty
+let parseMarks (urls: Map<string, string>) (content: string option) : PlaudMark list =
     let marks =
         match content with
         | Some json -> (try JsonNode.Parse json with _ -> null)
@@ -349,6 +366,26 @@ type PlaudClient(http: HttpClient) =
 
     let emptyJson () = new StringContent("{}", Encoding.UTF8, "application/json") :> HttpContent
 
+    /// `/file-app/v4/files/detail` of a recording (Loopback id): metadata plus presigned URLs
+    /// (~60 minutes) of its objects (AUDIO, MARK_MEMO, TRANSCRIPT, ...).
+    let detail (apiBase: string) (workspaceToken: string) (id: string) =
+        call apiBase workspaceToken HttpMethod.Get $"/file-app/v4/files/detail/{Uri.EscapeDataString(plaudId id)}" None
+
+    /// The detail's object of `objectType` that has a download URL.
+    let detailObject (objectType: string) (d: JsonNode) =
+        items (get d [ "data"; "objects" ])
+        |> List.tryFind (fun o -> str (get o [ "object_type" ]) = objectType && (str (get o [ "content_url" ])).StartsWith "https://")
+
+    /// One page of a cursor-paged v4 listing: the items and the next cursor (None after the last page).
+    let page (apiBase: string) (workspaceToken: string) (path: string) (cursor: string option) =
+        task {
+            let sep = if path.Contains '?' then "&" else "?"
+            let cursorParam = cursor |> Option.map (fun c -> "&cursor=" + Uri.EscapeDataString c) |> Option.defaultValue ""
+            let! r = call apiBase workspaceToken HttpMethod.Get $"{path}{sep}page_size=50{cursorParam}" None
+            let next = match str (get r [ "data"; "next_cursor" ]) with "" -> None | c -> Some c
+            return items (get r [ "data"; "items" ]), next
+        }
+
     /// Password login, as web.plaud.ai does it. Every call creates a new login session, and
     /// Plaud throttles logins per hour - prefer RefreshUserToken.
     member _.Login(email: string, password: string) : Threading.Tasks.Task<UserSession> =
@@ -421,85 +458,95 @@ type PlaudClient(http: HttpClient) =
             return parseSession workspaceId r
         }
 
-    /// One page of recordings (`trash`: the trash instead of the main list), most recently edited first.
-    member _.ListFiles(apiBase: string, workspaceToken: string, skip: int, limit: int, ?trash: bool) =
+    /// One page (50) of recordings from all folders, most recently edited first, and the cursor
+    /// of the next page.
+    member _.ListFiles(apiBase: string, workspaceToken: string, cursor: string option) =
         task {
-            let isTrash = if defaultArg trash false then 1 else 0
-            let! r = call apiBase workspaceToken HttpMethod.Get $"/file/simple/web?skip={skip}&limit={limit}&is_trash={isTrash}&sort_by=edit_time&is_desc=true" None
-            return
-                items (get r [ "data_file_list" ])
+            let! files, next = page apiBase workspaceToken "/file-app/v4/recordings/all?sort_by=updated_at&sort_order=desc" cursor
+            let parsed =
+                files
                 |> List.choose (fun f ->
-                    match str (get f [ "id" ]) with
+                    match str (get f [ "file_id" ]) with
                     | "" -> None
                     | id ->
                         Some {
-                            Id = id
-                            Filename = str (get f [ "filename" ])
-                            StartTime = DateTimeOffset.FromUnixTimeMilliseconds(int64' (get f [ "start_time" ]))
-                            DurationMs = int64' (get f [ "duration" ])
-                            Filesize = int64' (get f [ "filesize" ])
+                            Id = localId id
+                            Filename = str (get f [ "name" ])
+                            StartTime = DateTimeOffset.FromUnixTimeMilliseconds(int64' (get f [ "created_at_show_ms" ]))
+                            DurationMs = int64' (get f [ "duration_ms" ])
                             VersionMs = str (get f [ "version_ms" ])
-                            UtcOffsetMinutes =
-                                let hours, minutes = int (int64' (get f [ "timezone" ])), int (int64' (get f [ "zonemins" ]))
-                                hours * 60 + (if hours < 0 then -(abs minutes) else minutes)
-                            HasMarks = str (get f [ "is_markmemo" ]) = "true"
                         })
+            return parsed, next
         }
 
     /// Ids of all recordings in the main list or the trash. Fails rather than returning a
     /// partial set (callers delete local rows for ids missing here).
-    member this.ListAllIds(apiBase: string, workspaceToken: string, trash: bool) =
+    member _.ListAllIds(apiBase: string, workspaceToken: string, trash: bool) =
         task {
-            let pageSize, maxPages = 50, 400
+            let path = if trash then "/file-app/v4/folders/content?scope=trash" else "/file-app/v4/recordings/all"
+            let maxPages = 400
             let ids = Collections.Generic.HashSet<string>()
-            let mutable page = 0
+            let mutable cursor = None
+            let mutable pages = 0
             let mutable go = true
             while go do
-                let! files = this.ListFiles(apiBase, workspaceToken, page * pageSize, pageSize, trash)
-                for f in files do ids.Add f.Id |> ignore
-                page <- page + 1
-                go <- files.Length = pageSize
-                if go && page >= maxPages then
-                    raise (PlaudError $"more than {pageSize * maxPages} recordings - listing stopped")
+                let! files, next = page apiBase workspaceToken path cursor
+                // The trash also holds folders and other files - only file nodes have a file_id.
+                for f in files do
+                    match str (get f [ "file_id" ]) with
+                    | "" -> ()
+                    | id -> ids.Add(localId id) |> ignore
+                pages <- pages + 1
+                cursor <- next
+                go <- next.IsSome && not files.IsEmpty
+                if go && pages >= maxPages then
+                    raise (PlaudError $"more than {maxPages} pages of recordings - listing stopped")
             return Set.ofSeq ids
         }
 
-    /// Marks made during the call (docs/attachments.md, Plaud Marks); empty when the recording has none
-    /// or Plaud has not prepared them yet (`task_status` other than 1).
-    member _.GetMarks(apiBase: string, workspaceToken: string, fileId: string) =
+    /// Time zone, audio size and whether the recording has marks.
+    member _.GetFileDetail(apiBase: string, workspaceToken: string, id: string) =
         task {
-            let! r = call apiBase workspaceToken HttpMethod.Get $"/file/detail/{Uri.EscapeDataString fileId}" None
-            let d = get r [ "data" ]
-            let item =
-                items (get d [ "content_list" ])
-                |> List.tryFind (fun i -> str (get i [ "data_type" ]) = "mark_memo" && str (get i [ "task_status" ]) = "1")
-            match item with
+            let! d = detail apiBase workspaceToken id
+            let meta = get d [ "data"; "meta" ]
+            let offset =
+                match str (get meta [ "timezone_iana" ]) with
+                | "" -> None
+                | tz ->
+                    try
+                        let zone = TimeZoneInfo.FindSystemTimeZoneById tz
+                        let start = DateTimeOffset.FromUnixTimeMilliseconds(int64' (get meta [ "start_time" ]))
+                        Some(int (zone.GetUtcOffset start).TotalMinutes)
+                    with _ -> None
+            return {
+                Filesize = detailObject "AUDIO" d |> Option.map (fun o -> int64' (get o [ "object_size" ])) |> Option.defaultValue 0L
+                UtcOffsetMinutes = offset
+                // An empty mark list is "[]".
+                HasMarks = detailObject "MARK_MEMO" d |> Option.exists (fun o -> int64' (get o [ "object_size" ]) > 2L)
+            }
+        }
+
+    /// Marks made during the call (docs/attachments.md, Plaud Marks); empty when the recording has none.
+    member _.GetMarks(apiBase: string, workspaceToken: string, id: string) =
+        task {
+            let! d = detail apiBase workspaceToken id
+            match detailObject "MARK_MEMO" d with
             | None -> return []
-            | Some i ->
-                let dataId = str (get i [ "data_id" ])
-                let inline' =
-                    items (get d [ "pre_download_content_list" ])
-                    |> List.tryFind (fun p -> str (get p [ "data_id" ]) = dataId)
-                    |> Option.map (fun p -> str (get p [ "data_content" ]))
-                    |> Option.filter ((<>) "")
-                let! content =
-                    match inline', str (get i [ "data_link" ]) with
-                    | Some c, _ -> Threading.Tasks.Task.FromResult(Some c)
-                    | None, "" -> Threading.Tasks.Task.FromResult None
-                    | None, link ->
-                        task {
-                            // Presigned, no auth; may be gzip.
-                            let! bytes = http.GetByteArrayAsync link
-                            let bytes =
-                                if bytes.Length > 2 && bytes[0] = 0x1Fuy && bytes[1] = 0x8Buy then
-                                    use input = new IO.Compression.GZipStream(new IO.MemoryStream(bytes), IO.Compression.CompressionMode.Decompress)
-                                    use output = new IO.MemoryStream()
-                                    input.CopyTo output
-                                    output.ToArray()
-                                else bytes
-                            return Some(Encoding.UTF8.GetString bytes)
-                        }
-                return parseMarks r content
+            | Some o ->
+                // Presigned, no auth; may be gzip.
+                let! bytes = http.GetByteArrayAsync(str (get o [ "content_url" ]))
+                let bytes =
+                    if bytes.Length > 2 && bytes[0] = 0x1Fuy && bytes[1] = 0x8Buy then
+                        use input = new IO.Compression.GZipStream(new IO.MemoryStream(bytes), IO.Compression.CompressionMode.Decompress)
+                        use output = new IO.MemoryStream()
+                        input.CopyTo output
+                        output.ToArray()
+                    else bytes
+                let urls =
+                    match get d [ "data"; "relation_content_mapping" ] with
+                    | :? JsonObject as m -> m |> Seq.map (fun kv -> kv.Key, str kv.Value) |> Map.ofSeq
+                    | _ -> Map.empty
+                return parseMarks urls (Some(Encoding.UTF8.GetString bytes))
         }
 
     /// Downloads a mark's file from its presigned URL (no auth) to `path`.
@@ -512,11 +559,11 @@ type PlaudClient(http: HttpClient) =
             do! resp.Content.CopyToAsync file
         }
 
-    /// Presigned S3 URL of the audio (Ogg/Opus), valid ~60 minutes, supports HTTP Range.
-    member _.GetAudioUrl(apiBase: string, workspaceToken: string, fileId: string) =
+    /// Presigned S3 URL of the audio (Ogg/Opus, the AUDIO object), valid ~60 minutes, supports HTTP Range.
+    member _.GetAudioUrl(apiBase: string, workspaceToken: string, id: string) =
         task {
-            let! r = call apiBase workspaceToken HttpMethod.Get $"/file/temp-url/{Uri.EscapeDataString fileId}?is_opus=0" None
-            match str (get r [ "temp_url" ]) with
-            | "" -> return raise (PlaudError $"temp-url for {fileId} returned no temp_url")
-            | url -> return url
+            let! d = detail apiBase workspaceToken id
+            match detailObject "AUDIO" d with
+            | None -> return raise (PlaudError $"file detail of {id} has no AUDIO object")
+            | Some o -> return str (get o [ "content_url" ])
         }

@@ -17,7 +17,7 @@ open Loopback.Server.Features.Recordings.Sync.SyncTrigger
 open Loopback.Server.Features.Recordings.Audio.AudioStore
 open Loopback.Server.Features.Recordings.Attachments.AttachmentStore
 
-let private pageSize = 50
+/// Pages of 50 recordings (PlaudClient.ListFiles).
 let private maxPages = 20
 
 type SyncResult = { New : int; Updated : int }
@@ -35,20 +35,24 @@ type SyncBackgroundService(
     logger: ILogger<SyncBackgroundService>) =
     inherit BackgroundService()
 
-    /// Inserts new recordings and refreshes metadata of changed ones (`version_ms`).
+    let detailOf (f: PlaudFile) = session.Use(fun s -> plaud.GetFileDetail(s.ApiBase, s.WorkspaceToken, f.Id))
+
+    /// Inserts new recordings and refreshes metadata of changed ones (`version_ms`); the file
+    /// detail (time zone, size, marks) is fetched only for those.
     /// Tombstoned recordings are skipped, so a processed recording never comes back.
     let upsert (f: PlaudFile) =
         task {
             let! existing = recordings.TryGet f.Id
             match existing with
             | None ->
+                let! d = detailOf f
                 let now = Db.now ()
                 do! recordings.Insert {
                     Id = f.Id
                     Filename = f.Filename
                     StartTime = f.StartTime.ToUnixTimeMilliseconds()
                     DurationMs = f.DurationMs
-                    Filesize = f.Filesize
+                    Filesize = d.Filesize
                     VersionMs = f.VersionMs
                     Status = RecordingStatus.toKey Synced
                     Workflow = None
@@ -63,21 +67,19 @@ type SyncBackgroundService(
                     UpdatedAt = now
                     DeletedAt = None
                     Peaks = None
-                    UtcOffsetMinutes = Some(int64 f.UtcOffsetMinutes)
+                    UtcOffsetMinutes = Some(int64 (defaultArg d.UtcOffsetMinutes 0))
                     Result = None
                     Source = RecordingSource.toKey Plaud
                 }
-                do! recordings.SetHasPlaudMarks(f.Id, f.HasMarks)
+                do! recordings.SetHasPlaudMarks(f.Id, d.HasMarks)
                 return Some true
             // Also backfills the offset of rows synced before it was stored.
             | Some r when r.DeletedAt.IsNone && (r.VersionMs <> f.VersionMs || r.UtcOffsetMinutes.IsNone) ->
-                do! recordings.Update { r with Filename = f.Filename; StartTime = f.StartTime.ToUnixTimeMilliseconds(); DurationMs = f.DurationMs; Filesize = f.Filesize; VersionMs = f.VersionMs; UtcOffsetMinutes = Some(int64 f.UtcOffsetMinutes) }
-                do! recordings.SetHasPlaudMarks(f.Id, f.HasMarks)
+                let! d = detailOf f
+                let offset = d.UtcOffsetMinutes |> Option.map int64 |> Option.orElse r.UtcOffsetMinutes |> Option.defaultValue 0L
+                do! recordings.Update { r with Filename = f.Filename; StartTime = f.StartTime.ToUnixTimeMilliseconds(); DurationMs = f.DurationMs; Filesize = d.Filesize; VersionMs = f.VersionMs; UtcOffsetMinutes = Some offset }
+                do! recordings.SetHasPlaudMarks(f.Id, d.HasMarks)
                 return Some false
-            // Rows synced before marks were imported: one pass picks their flag up.
-            | Some r when r.DeletedAt.IsNone && f.HasMarks ->
-                do! recordings.SetHasPlaudMarks(f.Id, true)
-                return None
             | Some _ -> return None
         }
 
@@ -86,11 +88,12 @@ type SyncBackgroundService(
     let sync () =
         task {
             let mutable page = 0
+            let mutable cursor = None
             let mutable quietPages = 0
             let mutable result = { New = 0; Updated = 0 }
             let mutable go = true
             while go do
-                let! files = session.Use(fun s -> plaud.ListFiles(s.ApiBase, s.WorkspaceToken, page * pageSize, pageSize))
+                let! files, next = session.Use(fun s -> plaud.ListFiles(s.ApiBase, s.WorkspaceToken, cursor))
                 let mutable changed = 0
                 for f in files do
                     let! outcome = upsert f
@@ -100,7 +103,8 @@ type SyncBackgroundService(
                     | None -> ()
                 quietPages <- if changed = 0 then quietPages + 1 else 0
                 page <- page + 1
-                go <- files.Length = pageSize && quietPages < 2 && page < maxPages
+                cursor <- next
+                go <- next.IsSome && not files.IsEmpty && quietPages < 2 && page < maxPages
             return result
         }
 

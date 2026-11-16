@@ -362,3 +362,19 @@ Endpoints, from the web.plaud.ai bundle (`prod-261001`; `AuthPage`, `ecies` and 
 - `login_total_per_hour: 10` → Plaud throttles logins; every login adds a session (6 were listed after a few probes). Loopback logs in only when renewals fail and backs off 60 min after a refused login.
 - **Still open:** whether `urt_expire_at` slides on refresh (in the probe, refresh ran seconds after the login). Run `LOGIN_REFRESH_ONLY=1 dotnet fsi spikes/plaud-login-probe.fsx` after the 24 h user token expired. If it does not slide, Loopback simply logs in again every 30 days - no user action either way.
 - Accounts created via Google/Apple have no password - they would need one set in Plaud first (not tested).
+
+## 9. Plaud 4.0 (2026-11-15, EU account)
+
+The account was migrated to Plaud 4.0 (new web.plaud.ai with Library/folders). Login, user token and workspace token are **unchanged**; the 3.x file endpoints (`/file/simple/web`, `/file/detail`, `/file/temp-url`) now answer business status **-1800907** "Account migrated to 4.0. Please update and reinitialize."
+
+| Purpose | 4.0 endpoint (workspace token, no extra headers needed) |
+|---|---|
+| List recordings (all folders) | `GET /file-app/v4/recordings/all?page_size=50&sort_by=updated_at&sort_order=desc[&cursor=]` → `data.items[]` (`file_id`, `name`, `created_at_show_ms` = start, `duration_ms`, `version_ms`), `data.next_cursor` (empty after the last page) |
+| Trash | `GET /file-app/v4/folders/content?scope=trash&page_size=50[&cursor=]` → same paging; only file nodes have `file_id` |
+| Detail | `GET /file-app/v4/files/detail/{file_id}` → `data.meta` (`timezone_iana`, `start_time`, `duration`), `data.objects[]` (`object_type` AUDIO / MARK_MEMO / TRANSCRIPT / SUMMARY / ..., presigned `content_url` ~60 min, `object_size`), `data.relation_content_mapping` (mark `picture_link` → URL) |
+| Audio | the AUDIO object (`audio/opus`, Ogg) of the detail - no separate temp-url call |
+| Marks | the MARK_MEMO object's `content_url` → the same mark JSON as before (`mark_type`, `timestamp`, ...) |
+
+- **Ids changed:** migrated recordings are `of_<old 32-hex id>`, new ones `f_<id>`. Loopback keeps the old ids (strips / re-adds `of_`, see `Plaud.localId` / `Plaud.plaudId`), new recordings keep their `f_` id.
+- The per-recording "Highlights" document (`meta.extra.highlight_file_id`, file type MD) is Plaud's AI output, not the device marks - not listed by `recordings/all`.
+- Not verified yet: a photo mark in the 4.0 format (resolved like web.plaud.ai: `relation_content_mapping[picture_link]`, else `picture_full_url`).
