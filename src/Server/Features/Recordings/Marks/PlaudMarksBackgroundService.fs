@@ -2,6 +2,7 @@
 /// attachments; highlights, text notes and voice memos (transcribed by Speechmatics, audio not kept) become marks. Imported once - then they belong
 /// to Loopback, and one deleted there is not imported again. The only later update: a highlight
 /// imported while Plaud was still analyzing it gets its text (unless the user edited the note).
+/// Marks without any text (Plaud 4.0 app flags) get the transcript around them once the recording is transcribed.
 module Loopback.Server.Features.Recordings.Marks.PlaudMarksBackgroundService
 
 open System
@@ -183,6 +184,14 @@ type PlaudMarksBackgroundService(
                     | UnknownMark n ->
                         logger.LogWarning("Recording {Id}: Plaud mark {Key} has an unknown mark_type {Type} - skipped", c.Id, m.Key, n)
                         do! remember m "" false
+            // Marks imported after the recording was transcribed (or before this existed) get the transcript around them.
+            let! row = recordings.TryGet c.Id
+            match row |> Option.bind _.Transcript with
+            | Some transcript ->
+                // Not a change for the result: its summary already read the same transcript context.
+                let! filled = fillMarkNotes marks c.Id transcript
+                if filled > 0 then logger.LogInformation("Recording {Id}: {Count} marks got the transcript around them as their note", c.Id, filled)
+            | None -> ()
             do! recordings.SetPlaudMarksChecked(c.Id, c.VersionMs)
             if changed > 0 then
                 do! recordings.TouchAttachments c.Id

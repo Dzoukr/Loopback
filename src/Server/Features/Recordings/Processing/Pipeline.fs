@@ -47,6 +47,18 @@ let private cleanTitle (text: string) =
     |> Array.tryFind ((<>) "")
     |> Option.map (fun t -> if t.Length > 200 then t.Substring(0, 200) else t)
 
+/// Gives the textless Plaud marks of a transcribed recording the transcript around them as their note
+/// (Moments.transcriptNotes); returns how many were filled.
+let fillMarkNotes (marks: MarksRepository) (recordingId: string) (transcript: string) =
+    task {
+        let segments = JsonSerializer.Deserialize<Segment list>(transcript, Serialization.options)
+        let! rows = marks.GetByRecording recordingId
+        let filled = transcriptNotes segments rows
+        for m in filled do
+            do! marks.Update m
+        return filled.Length
+    }
+
 type Pipeline(
     recordings: RecordingsRepository,
     attachments: AttachmentsRepository,
@@ -198,6 +210,8 @@ type Pipeline(
                         if ok then
                             do! recordings.Update row
                             logger.LogInformation("Recording {Id}: transcript stored ({Segments} segments)", r.Id, segments.Length)
+                            let! filled = fillMarkNotes marks r.Id transcript
+                            if filled > 0 then logger.LogInformation("Recording {Id}: {Count} marks got the transcript around them as their note", r.Id, filled)
                         let! deleted = deleteJob jobId
                         if ok && deleted then do! recordings.Update { row with SpeechmaticsJobId = None }
         }

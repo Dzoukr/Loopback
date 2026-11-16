@@ -183,13 +183,14 @@ type PlaudFileDetail = {
 
 /// `mark_type` of a Plaud mark (docs/attachments.md, Plaud Marks).
 type PlaudMarkKind =
-    /// Plaud app voice memo - an Ogg file (transcribed, not kept), `Content` is Plaud's transcript of it.
+    /// Plaud 3.x app voice memo - an Ogg file (transcribed, not kept), `Content` is Plaud's transcript of it.
     | VoiceMemo
     /// Plaud app photo - an image file, `Content` is Plaud's AI description.
     | Photo
     /// Plaud app text note - `Content` is the user's text.
     | TextNote
-    /// Device button press - `Content` is Plaud's AI summary of the moment, filled in later.
+    /// Device button press (`mark_type` 4) - `Content` is Plaud's AI summary of the moment, filled in later.
+    /// Also the Plaud 4.0 app's flag (`mark_type` 1, `USER_FLAG` in web.plaud.ai): only a time, no file or text.
     | Highlight
     | UnknownMark of int
 
@@ -222,8 +223,12 @@ let parseMarks (urls: Map<string, string>) (content: string option) : PlaudMark 
     items marks
     |> List.map (fun m ->
         let typeNumber = int (int64' (get m [ "mark_type" ]))
+        let text = (str (get m [ "mark_content" ])).Trim()
+        let filePath = match str (get m [ "picture_link" ]) with "" -> None | p -> Some p
         let kind =
             match typeNumber with
+            // Plaud 4.0 reuses 1 for the app's flag button - a bare time, nothing to transcribe.
+            | 1 when filePath.IsNone && text = "" && str (get m [ "picture_full_url" ]) = "" -> Highlight
             | 1 -> VoiceMemo
             | 2 -> Photo
             | 3 -> TextNote
@@ -235,8 +240,6 @@ let parseMarks (urls: Map<string, string>) (content: string option) : PlaudMark 
             match get m [ "mark_status" ] with
             | null -> false
             | status -> int64' status <> 3L
-        let text = (str (get m [ "mark_content" ])).Trim()
-        let filePath = match str (get m [ "picture_link" ]) with "" -> None | p -> Some p
         let key =
             match str (get m [ "mark_id" ]) with
             | "" ->

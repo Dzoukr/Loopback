@@ -377,4 +377,5 @@ The account was migrated to Plaud 4.0 (new web.plaud.ai with Library/folders). L
 
 - **Ids changed:** migrated recordings are `of_<old 32-hex id>`, new ones `f_<id>`. Loopback keeps the old ids (strips / re-adds `of_`, see `Plaud.localId` / `Plaud.plaudId`), new recordings keep their `f_` id.
 - The per-recording "Highlights" document (`meta.extra.highlight_file_id`, file type MD) is Plaud's AI output, not the device marks - not listed by `recordings/all`.
+- `mark_type` 1 is no longer a voice memo: web.plaud.ai names the types `USER_FLAG` 1, `PHOTO` 2, `NOTE` 3, `HARD_FLAG` 4. A 4.0 app flag has only `mark_type` and `timestamp` (no `mark_id`, text or file) - Loopback imports it as a highlight (docs/attachments.md, Transcript notes).
 - Not verified yet: a photo mark in the 4.0 format (resolved like web.plaud.ai: `relation_content_mapping[picture_link]`, else `picture_full_url`).
