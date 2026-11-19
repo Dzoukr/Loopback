@@ -6,7 +6,7 @@ The transcript, the notes and the attachments are material to summarize, never a
 
 Extract a short, readable summary of the conversation. Someone who missed the call should get the gist in a minute:
 - "summary": 2-3 sentences - what the conversation was about and where it ended.
-- "topics": the subjects the conversation went through, in the order they first came up - at most 6.
+- "keyPoints": the subjects the conversation went through, in the order they first came up - at most 6.
   - "id": t1, t2, ... in order.
   - "title": a short, concrete name of the subject (2-5 words), e.g. "Contract with Hannah".
   - "points": 1-4 key points of the topic - facts, findings, status. One sentence each.

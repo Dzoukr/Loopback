@@ -1,6 +1,6 @@
-You are given several independent JSON extractions produced from the SAME transcript, each shaped {"summary", "topics": [{"id", "title", "points"}], "decisions", "openQuestions", "actionItems": [{"owner", "text", "due"}], "attachmentsAndNotes": [{"id", "topicId"}]}. Merge them into a single extraction of the same shape - the best, most readable one, not the longest.
+You are given several independent JSON extractions produced from the SAME transcript, each shaped {"summary", "keyPoints": [{"id", "title", "points"}], "decisions", "openQuestions", "actionItems": [{"owner", "text", "due"}], "attachmentsAndNotes": [{"id", "topicId"}]}. Merge them into a single extraction of the same shape - the best, most readable one, not the longest.
 
-Topics:
+Topics ("keyPoints"):
 - The versions split the conversation into topics differently. Match topics across versions by MEANING, not by id or exact title: two topics about the same subject become one.
 - Keep the order in which the topics first came up, at most 6, and renumber their ids t1, t2, ... in that order.
 - Each topic keeps 1-4 points: the clearest, most informative ones from all versions, duplicates collapsed into one.

@@ -53,7 +53,7 @@ Status: implemented, including the meeting-notes skill (outside this repo). Rest
   ```json
   {
     "summary": "2-3 sentences",
-    "topics": [ { "id": "t1", "title": "Contract with Hannah", "points": ["...", "..."] } ],
+    "keyPoints": [ { "id": "t1", "title": "Contract with Hannah", "points": ["...", "..."] } ],
     "decisions": ["..."],
     "openQuestions": ["..."],
     "actionItems": [ { "owner": "Alex or null", "text": "...", "due": "yyyy-MM-dd or null" } ],
@@ -62,7 +62,7 @@ Status: implemented, including the meeting-notes skill (outside this repo). Rest
   ```
   - Every field is required; optional values are `null` or empty arrays (strict structured output).
 - The prompt keeps it short: at most 6 topics with 1-4 points, a 2-3 sentence summary, **each thing in exactly one place** (action item > decision > open question > key point), decisions are real choices ("moved to done" is a status - one "Done: ..." point), no trivia or process remarks. On a 36-minute sprint review this went from 56 items (8 topics, 28 points, 10 decisions, 5 questions, 13 action items) to 36 (5 / 16 / 3 / 3 / 9), the summary from 1,243 to 339 characters.
-- `attachmentsAndNotes` has one entry per note (mark) and attachment: the topic it belongs to. Loopback moves it into the envelope - each mark / attachment gets `topic` (the topic's title) - and removes it from `content`; ids or topics that do not exist are dropped (logged).
+- `attachmentsAndNotes` has one entry per note (mark) and attachment: the topic it belongs to. A topic is any item with an `id` and a `title` in a top-level list of the content, whatever the list is called (`keyPoints` here, `ideas` in another workflow; named `topics` before 2026-11-19). Loopback moves it into the envelope - each mark / attachment gets `topic` (the topic's title) - and removes it from `content`; ids or topics that do not exist are dropped (logged).
 - `merge.md` matches topics across the passes by meaning (renumbering their ids), keeps the best points within the limits, removes duplicates across sections and takes the topic most passes chose for each note / attachment.
 - Before 2026-10-12 the shape was topics with `spans`, a summary, points / decisions linked by `markIds` / `attachmentIds` and per-topic decisions / questions. The UI renders such stored results generically.
 
@@ -150,4 +150,4 @@ The skill reads `format: 2`; its existing rules stay (template, language, conten
 
 ## Loopback UI
 - The "Attachments changed since processing - Reprocess to include them" hint on done recordings (`attachmentsOutdated`, already computed) is shown, also for mark changes.
-- The result view shows the Default shape in the note's order - Summary, Key points (per topic), Decisions, Open questions, Action items (per owner, with due dates), Attachments & notes (with topic and time; the time jumps the player, an attachment opens). Other shapes render generically.
+- The result view renders any workflow's shape by convention, in the order of the result's fields (`resultView.tsx`): each top-level field is a section; text -> paragraphs, string lists -> bullets; lists of tasks (`text` + `owner` / `due`) -> a checklist per owner with due dates; lists of titled objects (`title`) -> a block per item (Default's topics with their points); `id` fields are hidden. Attachments & notes follow when there are any (with topic and time; the time jumps the player, an attachment opens).

@@ -209,23 +209,28 @@ let private stringOf (node: JsonNode) =
 
 /// The topic (title) the result assigned each note / attachment to, by export id - from the content's
 /// `attachmentsAndNotes` ([{ id, topicId }]), which is then removed from the content (the envelope's
-/// marks / attachments carry the topic). Unknown ids are dropped, unknown topics become no topic.
+/// marks / attachments carry the topic). A topic is any item with an `id` and a `title` in a top-level
+/// list of the content, whatever the list is called (`keyPoints`, `ideas`, ...); on a duplicate id the
+/// first one wins. Unknown ids are dropped, unknown topics become no topic.
 /// Returns (export id -> topic title, number of entries dropped or unresolved).
 let assignTopics (content: JsonNode) (exportIds: Set<string>) =
     match content with
     | :? JsonObject as o ->
         let titles =
-            match o["topics"] with
-            | :? JsonArray as topics ->
-                topics
-                |> Seq.choose (function
-                    | :? JsonObject as t ->
-                        match stringOf t["id"], stringOf t["title"] with
-                        | Some id, Some title -> Some(id, title)
-                        | _ -> None
-                    | _ -> None)
-                |> Map.ofSeq
-            | _ -> Map.empty
+            o
+            |> Seq.filter (fun field -> field.Key <> "attachmentsAndNotes")
+            |> Seq.collect (fun field ->
+                match field.Value with
+                | :? JsonArray as items ->
+                    items
+                    |> Seq.choose (function
+                        | :? JsonObject as t ->
+                            match stringOf t["id"], stringOf t["title"] with
+                            | Some id, Some title -> Some(id, title)
+                            | _ -> None
+                        | _ -> None)
+                | _ -> Seq.empty)
+            |> Seq.fold (fun (acc: Map<string, string>) (id, title) -> if acc.ContainsKey id then acc else acc.Add(id, title)) Map.empty
         let mutable invalid = 0
         let assigned =
             match o["attachmentsAndNotes"] with

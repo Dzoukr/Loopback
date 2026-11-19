@@ -2,7 +2,7 @@
   "type": "object",
   "properties": {
     "summary": { "type": "string" },
-    "topics": {
+    "keyPoints": {
       "type": "array",
       "items": {
         "type": "object",
@@ -43,6 +43,6 @@
       }
     }
   },
-  "required": ["summary", "topics", "decisions", "openQuestions", "actionItems", "attachmentsAndNotes"],
+  "required": ["summary", "keyPoints", "decisions", "openQuestions", "actionItems", "attachmentsAndNotes"],
   "additionalProperties": false
 }
